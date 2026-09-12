@@ -1,0 +1,15 @@
+{
+  "sources": [
+    {"source_id":"study-planning","title":"学习计划的拆分方法","url":"https://example.invalid/evaluation/study-planning","summary":"将复习目标拆分为课程、章节和可检查产出。为每个任务安排固定时间块，并在时间块结束时记录完成情况。先处理近期截止事项，再根据剩余时间调整计划。每周复盘未完成任务，避免只写计划而不检查执行结果。"},
+    {"source_id":"retrieval-practice","title":"主动回忆的练习设计","url":"https://example.invalid/evaluation/retrieval-practice","summary":"主动回忆要求学习者先合上笔记，用自测问题回忆概念、步骤和例子。根据遗漏内容安排下一轮复习，而不是重复阅读全部材料。可以在复习时间块最后保留短测，记录答错的问题，下一次优先处理这些遗漏。"},
+    {"source_id":"source-literacy","title":"资料可信度检查清单","url":"https://example.invalid/evaluation/source-literacy","summary":"引用资料前记录作者或发布机构、发布日期、原始出处和结论适用范围。优先链接到原始数据、正式规则或完整研究，而不是只转述二手观点。对没有明确作者、日期或出处的内容，应降低断言强度并说明不确定性。"},
+    {"source_id":"privacy-boundary","title":"学习工具中的隐私边界","url":"https://example.invalid/evaluation/privacy-boundary","summary":"上传课程材料前确认文件是否包含姓名、学号、联系方式或其他个人信息。还要检查课程限制、版权要求和是否允许向第三方分享。对无法确认分享范围的资料，先不要上传，并向授课方或资料所有者确认。"}
+  ],
+  "cases": [
+    {"case_id":"plan-time-blocks","query":"怎样把复习任务拆成可执行的时间块？","expected_source_id":"study-planning"},
+    {"case_id":"retrieval-self-test","query":"主动回忆和自测如何安排下一轮复习？","expected_source_id":"retrieval-practice"},
+    {"case_id":"source-verification","query":"引用资料时怎样检查作者发布日期和原始出处？","expected_source_id":"source-literacy"},
+    {"case_id":"upload-privacy","query":"上传课程资料前要确认哪些个人信息和分享限制？","expected_source_id":"privacy-boundary"},
+    {"case_id":"out-of-domain","query":"量子纠缠实验装置如何校准？","expected_source_id":null}
+  ]
+}
