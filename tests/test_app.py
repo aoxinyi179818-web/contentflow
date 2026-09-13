@@ -15,7 +15,7 @@ def test_app_renders_chinese_workspace() -> None:
     assert [button.label for button in app.button[:2]] == ["仅本次会话使用", "保存到本机 .env"]
     assert app.radio[0].options == ["开始创作", "历史项目", "质量评估"]
     assert app.text_area[0].label == "本次想创作什么？"
-    assert [selectbox.label for selectbox in app.selectbox] == ["语气", "输出平台", "目标篇幅"]
+    assert [selectbox.label for selectbox in app.selectbox] == ["语气", "主创作平台", "目标篇幅"]
     assert app.text_input[1].label == "目标受众"
 
 

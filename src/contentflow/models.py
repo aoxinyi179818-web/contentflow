@@ -79,8 +79,21 @@ class ContentPlan(BaseModel):
     tone: str = Field(min_length=1)
     platform: ContentPlatform = "长文章"
     target_length: ContentLength = "中（约 800 字）"
-    sections: list[ContentSection] = Field(min_length=5, max_length=7)
+    sections: list[ContentSection] = Field(min_length=1, max_length=10)
     scope_note: str | None = None
+
+    @model_validator(mode="after")
+    def require_platform_native_section_count(self) -> "ContentPlan":
+        from contentflow.platforms import get_platform_standard
+
+        standard = get_platform_standard(self.platform)
+        section_count = len(self.sections)
+        if not standard.min_sections <= section_count <= standard.max_sections:
+            raise ValueError(
+                f"{self.platform} plan must contain "
+                f"{standard.min_sections} to {standard.max_sections} sections"
+            )
+        return self
 
 
 class ReviewProblem(BaseModel):

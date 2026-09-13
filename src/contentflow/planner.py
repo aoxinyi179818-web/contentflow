@@ -6,6 +6,7 @@ from contentflow.config import Settings
 from contentflow.llm_client import create_deepseek_client
 from contentflow.models import ContentPlan, ContentPreferences
 from contentflow.observability import record_llm_usage
+from contentflow.platforms import build_platform_guidance
 from contentflow.prompting import load_prompt
 from contentflow.structured import parse_structured_output
 
@@ -37,6 +38,7 @@ def build_planner_messages(
             f"\n- 语气：{preferences.tone}"
             f"\n- 输出平台：{preferences.platform}"
             f"\n- 目标篇幅：{preferences.target_length}"
+            f"\n\n{build_platform_guidance(preferences.platform)}"
         )
     return [
         {"role": "system", "content": PLANNER_INSTRUCTIONS},
@@ -69,8 +71,9 @@ def create_plan(
         raise RuntimeError("Planner returned an empty response.")
     plan = parse_structured_output(content, ContentPlan)
     if preferences:
-        return plan.model_copy(
-            update={
+        return ContentPlan.model_validate(
+            {
+                **plan.model_dump(),
                 "audience": preferences.audience,
                 "tone": preferences.tone,
                 "platform": preferences.platform,

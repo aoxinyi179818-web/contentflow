@@ -7,6 +7,7 @@ from contentflow.config import Settings
 from contentflow.llm_client import create_deepseek_client
 from contentflow.models import ContentPlan
 from contentflow.observability import record_llm_usage
+from contentflow.platforms import build_platform_guidance
 from contentflow.prompting import load_prompt
 
 
@@ -27,9 +28,18 @@ def build_writer_messages(plan: str | ContentPlan) -> list[dict[str, str]]:
     if not normalized_plan:
         raise WriterInputError("Confirmed plan must not be empty.")
 
+    platform_guidance = (
+        f"\n\n除计划外，必须遵守以下平台规则：\n{build_platform_guidance(plan.platform)}"
+        if isinstance(plan, ContentPlan)
+        else ""
+    )
+
     return [
         {"role": "system", "content": WRITER_INSTRUCTIONS},
-        {"role": "user", "content": f"请依据以下已确认计划写出初稿：\n\n{normalized_plan}"},
+        {
+            "role": "user",
+            "content": f"请依据以下已确认计划写出初稿：\n\n{normalized_plan}{platform_guidance}",
+        },
     ]
 
 

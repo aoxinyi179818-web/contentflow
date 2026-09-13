@@ -34,3 +34,5 @@ def test_build_planner_messages_includes_confirmed_content_preferences() -> None
     assert "友好易懂" in message
     assert "短视频脚本" in message
     assert "短（约 300 字）" in message
+    assert "前 3 秒钩子" in message
+    assert "4 至 6 个结构单元" in message

@@ -448,12 +448,16 @@ def main() -> None:
                 selected_tone = st.selectbox("语气", CONTENT_TONE_OPTIONS)
             platform, target_length = st.columns(2)
             with platform:
-                selected_platform = st.selectbox("输出平台", CONTENT_PLATFORM_OPTIONS)
+                selected_platform = st.selectbox(
+                    "主创作平台",
+                    CONTENT_PLATFORM_OPTIONS,
+                    help="平台会从策划阶段决定内容结构，而不只是最后改写格式。",
+                )
             with target_length:
                 selected_length = st.selectbox("目标篇幅", CONTENT_LENGTH_OPTIONS, index=1)
             submitted = st.form_submit_button("开始生成内容包", use_container_width=True)
         st.markdown(
-            '<p class="panel-note">当前 MVP 的输入仅为“主题”。受众、语气和文章结构由策划节点先生成，后续阶段会继续扩展为可编辑配置。</p>',
+            '<p class="panel-note">主创作平台会决定内容骨架：小红书使用钩子、分点与互动收尾；PPT 按页面组织；短视频按口播节奏组织。生成后仍可改写为其他平台版本。</p>',
             unsafe_allow_html=True,
         )
 
