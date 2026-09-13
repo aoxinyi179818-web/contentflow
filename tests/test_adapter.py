@@ -24,3 +24,9 @@ def test_adapter_messages_constrain_platform_and_preserve_source_boundary() -> N
     assert "目标平台：PPT 大纲" in messages[1]["content"]
     assert "目标受众：大学生" in messages[1]["content"]
     assert content in messages[1]["content"]
+
+
+def test_adapter_accepts_the_xiaohongshu_template() -> None:
+    message = build_adapter_messages("已审核内容", platform="小红书笔记")[1]["content"]
+
+    assert "目标平台：小红书笔记" in message

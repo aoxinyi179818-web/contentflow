@@ -41,5 +41,6 @@ def test_run_mvp_persists_completed_artifacts_when_repository_is_provided(
     assert result.final_content == "终稿"
     assert result.status == "completed"
     assert loaded is not None
+    assert result.project_id == loaded.id
     assert loaded.topic == "测试主题"
     assert loaded.final_content == "终稿"

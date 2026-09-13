@@ -6,7 +6,7 @@ from functools import partial
 
 from contentflow.config import Settings
 from contentflow.database import ProjectRepository
-from contentflow.models import ContentPlan, ContentPreferences, ReviewReport
+from contentflow.models import AdaptedContent, ContentPlan, ContentPreferences, ReviewReport
 from contentflow.observability import (
     RunMetrics,
     configure_logging,
@@ -31,6 +31,8 @@ class MvpResult:
     final_content: str
     status: str
     metrics: RunMetrics | None = None
+    project_id: str | None = None
+    adaptations: tuple[AdaptedContent, ...] = ()
 
 
 def run_mvp(
@@ -54,6 +56,18 @@ def run_mvp(
             services=WorkflowServices(planner_service, create_draft, review_draft, rewrite_draft),
             run_id=active_run_id,
         )
+        project_id = None
+        if repository:
+            saved_project = repository.save_project(
+                topic=topic,
+                plan=workflow_result["plan"],
+                draft=workflow_result["draft"],
+                review=workflow_result["review"],
+                final_content=workflow_result["final_content"],
+                status=workflow_result["status"],
+                run_id=active_run_id,
+            )
+            project_id = saved_project.id if saved_project else None
         result = MvpResult(
             plan=workflow_result["plan"],
             draft=workflow_result["draft"],
@@ -61,17 +75,8 @@ def run_mvp(
             final_content=workflow_result["final_content"],
             status=workflow_result["status"],
             metrics=get_run_metrics(active_run_id),
+            project_id=project_id,
         )
-        if repository:
-            repository.save_project(
-                topic=topic,
-                plan=result.plan,
-                draft=result.draft,
-                review=result.review,
-                final_content=result.final_content,
-                status=result.status,
-                run_id=active_run_id,
-            )
     except Exception as error:
         log_event("mvp_error", run_id=active_run_id, error_type=type(error).__name__)
         raise

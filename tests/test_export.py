@@ -3,7 +3,13 @@ from contentflow.export import (
     render_content_package_markdown,
     sanitize_export_stem,
 )
-from contentflow.models import ContentPlan, ContentSection, ReviewProblem, ReviewReport
+from contentflow.models import (
+    AdaptedContent,
+    ContentPlan,
+    ContentSection,
+    ReviewProblem,
+    ReviewReport,
+)
 from contentflow.mvp import MvpResult
 
 
@@ -36,6 +42,14 @@ def _result() -> MvpResult:
         ),
         final_content="这里是修订稿。",
         status="completed",
+        adaptations=(
+            AdaptedContent(
+                platform="小红书笔记",
+                title="学习习惯笔记",
+                content="这里是平台版本。",
+                format_notes=["短段落"],
+            ),
+        ),
     )
 
 
@@ -62,3 +76,5 @@ def test_content_package_contains_each_workflow_artifact() -> None:
     assert "总分：80/100" in package
     assert "例子不足" in package
     assert "这里是修订稿。" in package
+    assert "平台版本：小红书笔记" in package
+    assert "这里是平台版本。" in package

@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import streamlit as st
 
+from contentflow.adapter import adapt_content
 from contentflow.config import Settings, SettingsConfigurationError, save_deepseek_api_key
 from contentflow.database import ProjectRepository
 from contentflow.error_handling import present_failure
@@ -17,6 +20,7 @@ from contentflow.models import (
     CONTENT_LENGTH_OPTIONS,
     CONTENT_PLATFORM_OPTIONS,
     CONTENT_TONE_OPTIONS,
+    FEEDBACK_RATING_OPTIONS,
     ContentPreferences,
 )
 from contentflow.mvp import MvpResult, run_mvp
@@ -168,6 +172,146 @@ def render_review(result: MvpResult) -> None:
             st.markdown(f"- {suggestion}")
 
 
+def render_project_feedback(result: MvpResult) -> None:
+    """Collect one editable feedback record for the persisted content package."""
+    st.divider()
+    st.subheader("这次内容对你有帮助吗？")
+    if not result.project_id:
+        st.info("本次内容尚未保存为项目，暂时不能记录反馈。")
+        return
+    try:
+        repository = ProjectRepository(active_settings().database_url)
+        existing = repository.get_feedback(result.project_id)
+    except Exception as error:
+        presentation = present_failure(error)
+        if presentation.code == "unexpected":
+            raise
+        st.error(f"{presentation.title}：{presentation.message}")
+        return
+
+    initial_index = FEEDBACK_RATING_OPTIONS.index(existing.rating) if existing else 0
+    with st.form(f"project_feedback_{result.project_id}", border=False):
+        rating = st.radio(
+            "反馈结论",
+            FEEDBACK_RATING_OPTIONS,
+            index=initial_index,
+            horizontal=True,
+        )
+        comment = st.text_area(
+            "希望改进什么？（可选）",
+            value=existing.comment if existing else "",
+            max_chars=500,
+            placeholder="例如：请补充真实案例，或把语气调整得更轻松。",
+        )
+        submitted = st.form_submit_button("保存反馈", use_container_width=True)
+    if submitted:
+        try:
+            repository.save_feedback(result.project_id, rating=rating, comment=comment)
+        except ValueError as error:
+            st.error(f"反馈未保存：{error}")
+        else:
+            st.success("反馈已保存。再次提交会更新这条项目反馈。")
+
+
+def render_platform_adaptations(result: MvpResult) -> None:
+    """Create, retain, and download audience-aware versions for publication platforms."""
+    st.divider()
+    st.subheader("改写为发布模板")
+    st.caption("只依据已审阅的修订稿改写，不补充新的事实或来源。每个平台保留一份最新版本。")
+    target_platform = st.selectbox(
+        "目标发布模板",
+        CONTENT_PLATFORM_OPTIONS,
+        key=f"adaptation_target_{result.project_id or result.plan.topic}",
+    )
+    button_key = f"adaptation_generate_{result.project_id or result.plan.topic}"
+    if st.button("生成平台版本", use_container_width=True, key=button_key):
+        try:
+            with st.spinner(f"正在生成{target_platform}版本…"):
+                adaptation = adapt_content(
+                    result.final_content,
+                    platform=target_platform,
+                    audience=result.plan.audience,
+                    settings=active_settings(),
+                )
+                if result.project_id:
+                    ProjectRepository(active_settings().database_url).save_adaptation(
+                        result.project_id, adaptation
+                    )
+            adaptations = tuple(
+                item for item in result.adaptations if item.platform != adaptation.platform
+            ) + (adaptation,)
+            result = replace(result, adaptations=adaptations)
+            st.session_state["mvp_result"] = result
+            st.success(f"已生成并保存{adaptation.platform}版本。")
+        except Exception as error:
+            presentation = present_failure(error)
+            if presentation.code == "unexpected":
+                raise
+            st.error(f"{presentation.title}：{presentation.message}")
+
+    if not result.adaptations:
+        st.info("选择一个发布模板后生成。生成的版本会随项目历史保存在本机。")
+        return
+    st.markdown("**已生成的平台版本**")
+    for adaptation in result.adaptations:
+        with st.expander(f"{adaptation.platform} · {adaptation.title}"):
+            st.markdown(adaptation.content)
+            if adaptation.format_notes:
+                st.caption(" · ".join(adaptation.format_notes))
+            st.download_button(
+                f"下载 {adaptation.platform} (.md)",
+                data=f"# {adaptation.title}\n\n{adaptation.content}\n",
+                file_name=(
+                    f"{sanitize_export_stem(result.plan.topic)}-"
+                    f"{sanitize_export_stem(adaptation.platform, fallback='平台版本')}.md"
+                ),
+                mime="text/markdown",
+                key=f"adaptation_download_{result.project_id}_{adaptation.platform}",
+                use_container_width=True,
+            )
+
+
+def render_quality_overview() -> None:
+    """Show local evaluation signals without exposing any content to third parties."""
+    st.subheader("质量评估")
+    st.caption("仅汇总本机项目的最新反馈，并与 AI 审阅分数对照。")
+    try:
+        overview = ProjectRepository(active_settings().database_url).get_feedback_overview()
+    except Exception as error:
+        presentation = present_failure(error)
+        if presentation.code == "unexpected":
+            raise
+        st.error(f"{presentation.title}：{presentation.message}")
+        return
+
+    total, helpful, rate, score = st.columns(4)
+    total.metric("已反馈项目", overview.total_count)
+    helpful.metric("有帮助", overview.helpful_count)
+    rate.metric("有帮助率", f"{overview.helpful_rate}%" if overview.helpful_rate is not None else "暂无")
+    score.metric(
+        "平均审阅分",
+        f"{overview.average_review_score}/100" if overview.average_review_score is not None else "暂无",
+    )
+    if not overview.recent_items:
+        st.info("还没有反馈。完成创作后，在内容包底部提交你的判断。")
+        return
+    st.markdown("**最近反馈**")
+    st.dataframe(
+        [
+            {
+                "更新时间": item.updated_at.astimezone().strftime("%Y-%m-%d %H:%M"),
+                "项目": item.topic,
+                "用户反馈": item.rating,
+                "审阅分": item.review_score,
+                "说明": item.comment or "—",
+            }
+            for item in overview.recent_items
+        ],
+        hide_index=True,
+        use_container_width=True,
+    )
+
+
 def render_result(result: MvpResult, *, heading: str = "本次内容包") -> None:
     """Present every workflow artifact so users can inspect, not only copy, AI output."""
     st.divider()
@@ -210,6 +354,8 @@ def render_result(result: MvpResult, *, heading: str = "本次内容包") -> Non
             use_container_width=True,
         )
         st.caption("保存位置由浏览器决定。若希望每次选择位置，请在浏览器下载设置中开启“下载前询问每个文件的保存位置”。")
+    render_platform_adaptations(result)
+    render_project_feedback(result)
 
 
 def render_project_history() -> None:
@@ -273,13 +419,16 @@ def main() -> None:
 
     workspace = st.radio(
         "工作区",
-        ("开始创作", "历史项目"),
+        ("开始创作", "历史项目", "质量评估"),
         horizontal=True,
         label_visibility="collapsed",
     )
 
     if workspace == "历史项目":
         render_project_history()
+        return
+    if workspace == "质量评估":
+        render_quality_overview()
         return
 
     left, right = st.columns((1.08, 0.92), gap="large")

@@ -13,10 +13,17 @@ def format_project_label(summary: ProjectSummary) -> str:
 
 def result_from_project_record(record: ProjectRecord) -> MvpResult:
     """Adapt a persisted record to the existing result viewer contract."""
+    adaptations = [item.content for item in record.adaptations]
+    if record.adapted_content and all(
+        item.platform != record.adapted_content.platform for item in adaptations
+    ):
+        adaptations.append(record.adapted_content)
     return MvpResult(
         plan=record.plan,
         draft=record.draft,
         review=record.review,
         final_content=record.final_content,
         status=record.status,
+        project_id=record.id,
+        adaptations=tuple(adaptations),
     )

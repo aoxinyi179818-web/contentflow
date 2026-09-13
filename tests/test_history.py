@@ -62,3 +62,4 @@ def test_result_from_project_record_keeps_the_viewer_artifacts() -> None:
     assert result.review == record.review
     assert result.final_content == "修订稿"
     assert result.metrics is None
+    assert result.project_id == "project-1"

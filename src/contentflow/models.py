@@ -2,16 +2,26 @@
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-ContentPlatform = Literal["长文章", "社交媒体文案", "PPT 大纲", "短视频脚本"]
+ContentPlatform = Literal[
+    "长文章",
+    "公众号文章",
+    "小红书笔记",
+    "社交媒体文案",
+    "PPT 大纲",
+    "短视频脚本",
+]
 ContentTone = Literal["清晰专业", "友好易懂", "启发思考", "简洁有力"]
 ContentLength = Literal["短（约 300 字）", "中（约 800 字）", "长（约 1500 字）"]
+FeedbackRating = Literal["有帮助", "需要改进"]
 VisualAssetType = Literal["image", "chart"]
 VisualTool = Literal["image_search", "image_generation", "chart"]
 
 CONTENT_PLATFORM_OPTIONS: tuple[ContentPlatform, ...] = (
     "长文章",
+    "公众号文章",
+    "小红书笔记",
     "社交媒体文案",
     "PPT 大纲",
     "短视频脚本",
@@ -22,6 +32,7 @@ CONTENT_LENGTH_OPTIONS: tuple[ContentLength, ...] = (
     "中（约 800 字）",
     "长（约 1500 字）",
 )
+FEEDBACK_RATING_OPTIONS: tuple[FeedbackRating, ...] = ("有帮助", "需要改进")
 
 
 class ContentPreferences(BaseModel):
@@ -33,6 +44,20 @@ class ContentPreferences(BaseModel):
     tone: ContentTone
     platform: ContentPlatform
     target_length: ContentLength
+
+
+class ProjectFeedbackInput(BaseModel):
+    """One user's latest quality judgment for a saved local project."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    rating: FeedbackRating
+    comment: str = Field(default="", max_length=500)
+
+    @field_validator("comment")
+    @classmethod
+    def normalize_comment(cls, value: str) -> str:
+        return value.strip()
 
 
 class ContentSection(BaseModel):

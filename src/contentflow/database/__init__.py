@@ -1,5 +1,21 @@
 """SQLite persistence for ContentFlow project artifacts."""
 
-from contentflow.database.projects import ProjectRecord, ProjectRepository, ProjectSummary
+from contentflow.database.projects import (
+    FeedbackOverview,
+    FeedbackProjectItem,
+    ProjectAdaptation,
+    ProjectFeedback,
+    ProjectRecord,
+    ProjectRepository,
+    ProjectSummary,
+)
 
-__all__ = ["ProjectRecord", "ProjectRepository", "ProjectSummary"]
+__all__ = [
+    "FeedbackOverview",
+    "FeedbackProjectItem",
+    "ProjectAdaptation",
+    "ProjectFeedback",
+    "ProjectRecord",
+    "ProjectRepository",
+    "ProjectSummary",
+]

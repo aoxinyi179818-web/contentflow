@@ -13,7 +13,7 @@ def test_app_renders_chinese_workspace() -> None:
     assert not app.exception
     assert app.title[0].value == "把一个主题，变成可审阅的内容"
     assert [button.label for button in app.button[:2]] == ["仅本次会话使用", "保存到本机 .env"]
-    assert app.radio[0].options == ["开始创作", "历史项目"]
+    assert app.radio[0].options == ["开始创作", "历史项目", "质量评估"]
     assert app.text_area[0].label == "本次想创作什么？"
     assert [selectbox.label for selectbox in app.selectbox] == ["语气", "输出平台", "目标篇幅"]
     assert app.text_input[1].label == "目标受众"
@@ -33,3 +33,11 @@ def test_app_renders_empty_project_history() -> None:
 
     assert not app.exception
     assert app.subheader[0].value == "项目历史"
+
+
+def test_app_renders_empty_quality_overview() -> None:
+    app = AppTest.from_file(APP_PATH, default_timeout=10).run()
+    app.radio[0].set_value("质量评估").run()
+
+    assert not app.exception
+    assert app.subheader[0].value == "质量评估"

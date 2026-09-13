@@ -114,3 +114,71 @@ def test_repository_lists_recent_projects_and_validates_inputs(tmp_path) -> None
         repository.list_recent_projects(limit=0)
     with pytest.raises(DatabaseUrlError, match="sqlite"):
         ProjectRepository("postgresql://example")
+
+
+def test_repository_upserts_feedback_and_builds_a_quality_overview(tmp_path) -> None:
+    repository = ProjectRepository(f"sqlite:///{(tmp_path / 'contentflow.db').as_posix()}")
+    first = repository.save_project(
+        topic="主题一",
+        plan=make_plan(),
+        draft="初稿一",
+        review=make_review(),
+        final_content="终稿一",
+        status="completed",
+    )
+    second = repository.save_project(
+        topic="主题二",
+        plan=make_plan(),
+        draft="初稿二",
+        review=make_review(),
+        final_content="终稿二",
+        status="completed",
+    )
+
+    repository.save_feedback(first.id, rating="需要改进", comment="请增加例子。")
+    updated = repository.save_feedback(first.id, rating="有帮助", comment="已经清楚了。")
+    repository.save_feedback(second.id, rating="需要改进")
+    overview = repository.get_feedback_overview()
+
+    assert repository.get_feedback(first.id) == updated
+    assert overview.total_count == 2
+    assert overview.helpful_count == 1
+    assert overview.improvement_count == 1
+    assert overview.helpful_rate == 50
+    assert overview.average_review_score == 90
+    assert {item.topic for item in overview.recent_items} == {"主题一", "主题二"}
+    with pytest.raises(ValueError, match="project does not exist"):
+        repository.save_feedback("missing", rating="有帮助")
+
+
+def test_repository_keeps_one_adaptation_for_each_platform(tmp_path) -> None:
+    repository = ProjectRepository(f"sqlite:///{(tmp_path / 'contentflow.db').as_posix()}")
+    project = repository.save_project(
+        topic="主题一",
+        plan=make_plan(),
+        draft="初稿一",
+        review=make_review(),
+        final_content="终稿一",
+        status="completed",
+    )
+    xiaohongshu = AdaptedContent(
+        platform="小红书笔记",
+        title="学习笔记",
+        content="短段落内容",
+        format_notes=["短段落"],
+    )
+    ppt = AdaptedContent(
+        platform="PPT 大纲",
+        title="学习计划 PPT",
+        content="第 1 页：目标",
+        format_notes=["一页一个主题"],
+    )
+
+    repository.save_adaptation(project.id, xiaohongshu)
+    repository.save_adaptation(project.id, ppt)
+    repository.save_adaptation(project.id, xiaohongshu.model_copy(update={"title": "更新的学习笔记"}))
+    loaded = repository.get_project(project.id)
+
+    assert loaded is not None
+    assert {item.content.platform for item in loaded.adaptations} == {"小红书笔记", "PPT 大纲"}
+    assert next(item for item in loaded.adaptations if item.content.platform == "小红书笔记").content.title == "更新的学习笔记"

@@ -60,12 +60,17 @@ def render_content_package_markdown(result: MvpResult) -> str:
             for problem in result.review.problems
         )
 
-    return "\n\n".join(
-        (
-            "# ContentFlow AI 内容包",
-            "## 内容计划\n" + "\n".join(plan_lines),
-            "## 初稿\n" + result.draft,
-            "## 审阅报告\n" + "\n".join(review_lines),
-            "## 修订稿\n" + result.final_content,
-        )
-    ) + "\n"
+    sections = [
+        "# ContentFlow AI 内容包",
+        "## 内容计划\n" + "\n".join(plan_lines),
+        "## 初稿\n" + result.draft,
+        "## 审阅报告\n" + "\n".join(review_lines),
+        "## 修订稿\n" + result.final_content,
+    ]
+    sections.extend(
+        f"## 平台版本：{adaptation.platform}\n"
+        f"### {adaptation.title}\n\n{adaptation.content}\n\n"
+        + "\n".join(f"- {note}" for note in adaptation.format_notes)
+        for adaptation in result.adaptations
+    )
+    return "\n\n".join(sections) + "\n"
