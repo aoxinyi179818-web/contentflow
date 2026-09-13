@@ -12,6 +12,7 @@ from contentflow.export import (
     render_content_package_markdown,
     sanitize_export_stem,
 )
+from contentflow.history import format_project_label, result_from_project_record
 from contentflow.mvp import MvpResult, run_mvp
 from contentflow.observability import configure_logging, log_event, new_run_id
 
@@ -158,10 +159,10 @@ def render_review(result: MvpResult) -> None:
             st.markdown(f"- {suggestion}")
 
 
-def render_result(result: MvpResult) -> None:
+def render_result(result: MvpResult, *, heading: str = "本次内容包") -> None:
     """Present every workflow artifact so users can inspect, not only copy, AI output."""
     st.divider()
-    st.subheader("本次内容包")
+    st.subheader(heading)
     st.info(
         "使用提示：AI 生成内容可能有错误，请核查关键事实、引用和适用范围。"
         "当前 Research 使用本地演示资料，不等同于实时网络检索。"
@@ -202,6 +203,50 @@ def render_result(result: MvpResult) -> None:
         st.caption("保存位置由浏览器决定。若希望每次选择位置，请在浏览器下载设置中开启“下载前询问每个文件的保存位置”。")
 
 
+def render_project_history() -> None:
+    """List recent local projects and load one only when the user chooses it."""
+    st.subheader("项目历史")
+    st.caption("最近 20 个已保存到本机 SQLite 的内容包。选择项目后可查看与导出。")
+    try:
+        repository = ProjectRepository(active_settings().database_url)
+        summaries = repository.list_recent_projects()
+    except Exception as error:
+        presentation = present_failure(error)
+        if presentation.code == "unexpected":
+            raise
+        st.error(f"{presentation.title}：{presentation.message}")
+        return
+
+    if not summaries:
+        st.info("还没有历史项目。完成第一轮创作后，内容包会自动保存在这里。")
+        return
+
+    selected_summary = st.selectbox(
+        "选择历史项目",
+        summaries,
+        format_func=format_project_label,
+        key="history_project_selection",
+    )
+    if st.button("打开项目", use_container_width=True):
+        record = repository.get_project(selected_summary.id)
+        if record is None:
+            st.error("该项目已不存在，请刷新后重新选择。")
+            return
+        st.session_state["mvp_result"] = result_from_project_record(record)
+        st.session_state["mvp_export_stem"] = default_export_stem(record.topic)
+        st.session_state["history_open_project_id"] = record.id
+        st.success("已加载项目。你可以查看全部内容或导出内容包。")
+
+    opened_project_id = st.session_state.get("history_open_project_id")
+    if opened_project_id:
+        record = repository.get_project(opened_project_id)
+        if record is None:
+            st.session_state.pop("history_open_project_id", None)
+            st.warning("上次打开的项目已不存在。")
+        else:
+            render_result(result_from_project_record(record), heading="历史项目内容包")
+
+
 def main() -> None:
     apply_styles()
     title_column, config_column = st.columns((0.78, 0.22), vertical_alignment="top")
@@ -216,6 +261,17 @@ def main() -> None:
         unsafe_allow_html=True,
     )
     render_workflow_rail()
+
+    workspace = st.radio(
+        "工作区",
+        ("开始创作", "历史项目"),
+        horizontal=True,
+        label_visibility="collapsed",
+    )
+
+    if workspace == "历史项目":
+        render_project_history()
+        return
 
     left, right = st.columns((1.08, 0.92), gap="large")
     with left:
@@ -273,7 +329,7 @@ def main() -> None:
     result = st.session_state.get("mvp_result")
     if result is None:
         st.markdown(
-            '<div class="empty-state"><strong>还没有内容包</strong><br>在左侧输入主题并开始生成；结果会留在本次页面会话中供你检查。</div>',
+            '<div class="empty-state"><strong>还没有内容包</strong><br>输入主题并开始生成；结果会留在本次页面会话中供你检查。</div>',
             unsafe_allow_html=True,
         )
     else:
