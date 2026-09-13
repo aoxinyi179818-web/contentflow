@@ -4,9 +4,14 @@ from __future__ import annotations
 
 import streamlit as st
 
-from contentflow.config import Settings
+from contentflow.config import Settings, SettingsConfigurationError, save_deepseek_api_key
 from contentflow.database import ProjectRepository
 from contentflow.error_handling import present_failure
+from contentflow.export import (
+    default_export_stem,
+    render_content_package_markdown,
+    sanitize_export_stem,
+)
 from contentflow.mvp import MvpResult, run_mvp
 from contentflow.observability import configure_logging, log_event, new_run_id
 
@@ -71,6 +76,46 @@ def render_workflow_rail() -> None:
         f'<div class="flow-rail">{nodes}</div></section>',
         unsafe_allow_html=True,
     )
+
+
+def render_api_configuration() -> None:
+    """Let a local user choose a session key or explicitly save one to local .env."""
+    with st.popover("API 配置", use_container_width=True):
+        st.caption("仅在本机生效。输入内容不会显示在页面或日志中。")
+        with st.form("api_key_configuration", border=False):
+            api_key = st.text_input(
+                "DeepSeek API Key",
+                type="password",
+                placeholder="输入你的 Key",
+            )
+            use_for_session = st.form_submit_button("仅本次会话使用", use_container_width=True)
+            save_to_disk = st.form_submit_button("保存到本机 .env", use_container_width=True)
+
+        if use_for_session or save_to_disk:
+            try:
+                session_settings = Settings().with_deepseek_api_key(api_key)
+            except SettingsConfigurationError as error:
+                st.error(str(error))
+            else:
+                st.session_state["deepseek_session_api_key"] = session_settings.deepseek_api_key
+                if save_to_disk:
+                    save_deepseek_api_key(session_settings.deepseek_api_key)
+                    st.success("已保存到本机 .env，并在本次会话生效。")
+                else:
+                    st.success("已仅为本次会话配置 API Key。")
+
+        if st.session_state.get("deepseek_session_api_key"):
+            st.caption("当前会话已配置 API Key。")
+            if st.button("移除本次会话 Key", use_container_width=True):
+                st.session_state.pop("deepseek_session_api_key", None)
+                st.success("已移除本次会话 API Key。")
+
+
+def active_settings() -> Settings:
+    """Load local settings and apply the optional non-persistent session override."""
+    settings = Settings.from_env()
+    session_key = st.session_state.get("deepseek_session_api_key")
+    return settings.with_deepseek_api_key(session_key) if session_key else settings
 
 
 def render_plan(result: MvpResult) -> None:
@@ -140,19 +185,32 @@ def render_result(result: MvpResult) -> None:
         render_review(result)
     with final_tab:
         st.markdown(result.final_content)
+        if "mvp_export_stem" not in st.session_state:
+            st.session_state["mvp_export_stem"] = default_export_stem(result.plan.topic)
+        st.text_input(
+            "导出文件名",
+            key="mvp_export_stem",
+            help="仅修改文件名；不需要填写 .md 后缀。",
+        )
         st.download_button(
-            "下载修订稿 (.md)",
-            data=result.final_content,
-            file_name="contentflow-修订稿.md",
+            "下载内容包 (.md)",
+            data=render_content_package_markdown(result),
+            file_name=f"{sanitize_export_stem(st.session_state['mvp_export_stem'])}.md",
             mime="text/markdown",
             use_container_width=True,
         )
+        st.caption("保存位置由浏览器决定。若希望每次选择位置，请在浏览器下载设置中开启“下载前询问每个文件的保存位置”。")
 
 
 def main() -> None:
     apply_styles()
-    st.markdown('<div class="eyebrow">ContentFlow AI · MVP</div>', unsafe_allow_html=True)
-    st.title("把一个主题，变成可审阅的内容")
+    title_column, config_column = st.columns((0.78, 0.22), vertical_alignment="top")
+    with title_column:
+        st.markdown('<div class="eyebrow">ContentFlow AI · MVP</div>', unsafe_allow_html=True)
+        st.title("把一个主题，变成可审阅的内容")
+    with config_column:
+        st.write("")
+        render_api_configuration()
     st.markdown(
         '<p class="hero-copy">输入内容主题，依次运行策划、写作、审阅和修订。你可以保留每一环的产物，判断 AI 的结论是否可靠，而不只是拿走一段成稿。</p>',
         unsafe_allow_html=True,
@@ -194,7 +252,7 @@ def main() -> None:
             log_event("ui_submit", run_id=run_id, topic_length=len(normalized_topic))
             try:
                 with st.spinner("正在依次完成策划、写作、审阅和修订…"):
-                    settings = Settings.from_env()
+                    settings = active_settings()
                     repository = ProjectRepository(settings.database_url)
                     st.session_state["mvp_result"] = run_mvp(
                         normalized_topic,
@@ -202,6 +260,7 @@ def main() -> None:
                         repository=repository,
                         run_id=run_id,
                     )
+                st.session_state["mvp_export_stem"] = default_export_stem(normalized_topic)
                 log_event("ui_complete", run_id=run_id)
                 st.success("内容包已保存到本地项目历史。")
             except Exception as error:
