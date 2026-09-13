@@ -4,7 +4,7 @@ import argparse
 
 from contentflow.config import Settings
 from contentflow.llm_client import create_deepseek_client
-from contentflow.models import ContentPlan
+from contentflow.models import ContentPlan, ContentPreferences
 from contentflow.observability import record_llm_usage
 from contentflow.prompting import load_prompt
 from contentflow.structured import parse_structured_output
@@ -21,19 +21,35 @@ class PlannerConfigurationError(RuntimeError):
 PLANNER_INSTRUCTIONS = load_prompt("planner")
 
 
-def build_planner_messages(topic: str) -> list[dict[str, str]]:
+def build_planner_messages(
+    topic: str, *, preferences: ContentPreferences | None = None
+) -> list[dict[str, str]]:
     """Validate a topic and build the first Planner request."""
     normalized_topic = topic.strip()
     if not normalized_topic:
         raise PlannerInputError("Topic must not be empty.")
 
+    request = f"请为这个主题制定内容计划：{normalized_topic}"
+    if preferences:
+        request += (
+            "\n\n用户已确定以下创作要求，必须严格遵守："
+            f"\n- 目标受众：{preferences.audience}"
+            f"\n- 语气：{preferences.tone}"
+            f"\n- 输出平台：{preferences.platform}"
+            f"\n- 目标篇幅：{preferences.target_length}"
+        )
     return [
         {"role": "system", "content": PLANNER_INSTRUCTIONS},
-        {"role": "user", "content": f"请为这个主题制定内容计划：{normalized_topic}"},
+        {"role": "user", "content": request},
     ]
 
 
-def create_plan(topic: str, settings: Settings | None = None) -> ContentPlan:
+def create_plan(
+    topic: str,
+    settings: Settings | None = None,
+    *,
+    preferences: ContentPreferences | None = None,
+) -> ContentPlan:
     """Request and validate one structured content plan from DeepSeek."""
     active_settings = settings or Settings.from_env()
     client = create_deepseek_client(
@@ -43,7 +59,7 @@ def create_plan(topic: str, settings: Settings | None = None) -> ContentPlan:
     )
     response = client.chat.completions.create(
         model=active_settings.llm_model,
-        messages=build_planner_messages(topic),
+        messages=build_planner_messages(topic, preferences=preferences),
         response_format={"type": "json_object"},
         max_tokens=2000,
     )
@@ -51,7 +67,17 @@ def create_plan(topic: str, settings: Settings | None = None) -> ContentPlan:
     content = response.choices[0].message.content
     if not content:
         raise RuntimeError("Planner returned an empty response.")
-    return parse_structured_output(content, ContentPlan)
+    plan = parse_structured_output(content, ContentPlan)
+    if preferences:
+        return plan.model_copy(
+            update={
+                "audience": preferences.audience,
+                "tone": preferences.tone,
+                "platform": preferences.platform,
+                "target_length": preferences.target_length,
+            }
+        )
+    return plan
 
 
 def main() -> None:

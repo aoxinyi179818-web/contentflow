@@ -13,6 +13,12 @@ from contentflow.export import (
     sanitize_export_stem,
 )
 from contentflow.history import format_project_label, result_from_project_record
+from contentflow.models import (
+    CONTENT_LENGTH_OPTIONS,
+    CONTENT_PLATFORM_OPTIONS,
+    CONTENT_TONE_OPTIONS,
+    ContentPreferences,
+)
 from contentflow.mvp import MvpResult, run_mvp
 from contentflow.observability import configure_logging, log_event, new_run_id
 
@@ -120,7 +126,10 @@ def active_settings() -> Settings:
 
 
 def render_plan(result: MvpResult) -> None:
-    st.caption(f"受众：{result.plan.audience}　·　语气：{result.plan.tone}")
+    st.caption(
+        f"受众：{result.plan.audience}　·　语气：{result.plan.tone}　·　"
+        f"平台：{result.plan.platform}　·　篇幅：{result.plan.target_length}"
+    )
     if result.plan.scope_note:
         st.info(result.plan.scope_note)
     for order, section in enumerate(result.plan.sections, start=1):
@@ -282,6 +291,17 @@ def main() -> None:
                 placeholder="例如：面向大学新生，写一篇 800 字的文章，解释如何建立可持续的学习习惯。",
                 height=150,
             )
+            st.markdown("**内容偏好**")
+            audience, tone = st.columns((1.2, 0.8))
+            with audience:
+                target_audience = st.text_input("目标受众", value="通用读者")
+            with tone:
+                selected_tone = st.selectbox("语气", CONTENT_TONE_OPTIONS)
+            platform, target_length = st.columns(2)
+            with platform:
+                selected_platform = st.selectbox("输出平台", CONTENT_PLATFORM_OPTIONS)
+            with target_length:
+                selected_length = st.selectbox("目标篇幅", CONTENT_LENGTH_OPTIONS, index=1)
             submitted = st.form_submit_button("开始生成内容包", use_container_width=True)
         st.markdown(
             '<p class="panel-note">当前 MVP 的输入仅为“主题”。受众、语气和文章结构由策划节点先生成，后续阶段会继续扩展为可编辑配置。</p>',
@@ -307,6 +327,12 @@ def main() -> None:
             normalized_topic = topic.strip()
             log_event("ui_submit", run_id=run_id, topic_length=len(normalized_topic))
             try:
+                preferences = ContentPreferences(
+                    audience=target_audience.strip(),
+                    tone=selected_tone,
+                    platform=selected_platform,
+                    target_length=selected_length,
+                )
                 with st.spinner("正在依次完成策划、写作、审阅和修订…"):
                     settings = active_settings()
                     repository = ProjectRepository(settings.database_url)
@@ -315,6 +341,7 @@ def main() -> None:
                         settings=settings,
                         repository=repository,
                         run_id=run_id,
+                        preferences=preferences,
                     )
                 st.session_state["mvp_export_stem"] = default_export_stem(normalized_topic)
                 log_event("ui_complete", run_id=run_id)

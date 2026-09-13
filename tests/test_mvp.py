@@ -1,6 +1,6 @@
 from contentflow import mvp
 from contentflow.config import Settings
-from contentflow.models import ContentPlan, ContentSection, ReviewReport
+from contentflow.models import ContentPlan, ContentPreferences, ContentSection, ReviewReport
 
 
 def test_run_mvp_preserves_its_result_interface_with_quality_loop(monkeypatch) -> None:
@@ -68,3 +68,48 @@ def test_run_mvp_preserves_its_result_interface_with_quality_loop(monkeypatch) -
         "rewrite:DRAFT:70",
         "review:FINAL",
     ]
+
+
+def test_run_mvp_passes_user_preferences_to_the_planner(monkeypatch) -> None:
+    settings = Settings()
+    preferences = ContentPreferences(
+        audience="大学新生",
+        tone="友好易懂",
+        platform="短视频脚本",
+        target_length="短（约 300 字）",
+    )
+    plan = ContentPlan(
+        topic="测试主题",
+        audience="大学新生",
+        tone="友好易懂",
+        platform="短视频脚本",
+        target_length="短（约 300 字）",
+        sections=[ContentSection(title=f"第{i}章", objective="解释一个步骤") for i in range(1, 6)],
+    )
+    review = ReviewReport(
+        score=80,
+        summary="通过。",
+        structure_score=20,
+        clarity_score=20,
+        audience_tone_score=20,
+        completeness_score=20,
+    )
+
+    def fake_plan(
+        topic: str, *, settings: Settings, preferences: ContentPreferences
+    ) -> ContentPlan:
+        assert topic == "测试主题"
+        assert preferences == expected_preferences
+        return plan
+
+    monkeypatch.setattr(mvp, "create_plan", fake_plan)
+    monkeypatch.setattr(mvp, "create_draft", lambda plan, *, settings: "初稿")
+    monkeypatch.setattr(mvp, "review_draft", lambda draft, *, settings: review)
+    monkeypatch.setattr(
+        mvp, "rewrite_draft", lambda draft, review, *, settings: "修订稿"
+    )
+
+    expected_preferences = preferences
+    result = mvp.run_mvp("测试主题", settings=settings, preferences=expected_preferences)
+
+    assert result.plan.platform == "短视频脚本"

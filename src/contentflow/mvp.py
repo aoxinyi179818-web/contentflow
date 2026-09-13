@@ -2,10 +2,11 @@
 
 import argparse
 from dataclasses import dataclass
+from functools import partial
 
 from contentflow.config import Settings
 from contentflow.database import ProjectRepository
-from contentflow.models import ContentPlan, ReviewReport
+from contentflow.models import ContentPlan, ContentPreferences, ReviewReport
 from contentflow.observability import (
     RunMetrics,
     configure_logging,
@@ -37,16 +38,20 @@ def run_mvp(
     settings: Settings | None = None,
     repository: ProjectRepository | None = None,
     run_id: str | None = None,
+    preferences: ContentPreferences | None = None,
 ) -> MvpResult:
     """Run the bounded LangGraph workflow while preserving the MVP result interface."""
     active_settings = settings or Settings.from_env()
     active_run_id = run_id or new_run_id()
     log_event("mvp_start", run_id=active_run_id)
     try:
+        planner_service = (
+            partial(create_plan, preferences=preferences) if preferences else create_plan
+        )
         workflow_result = run_contentflow_graph(
             topic,
             settings=active_settings,
-            services=WorkflowServices(create_plan, create_draft, review_draft, rewrite_draft),
+            services=WorkflowServices(planner_service, create_draft, review_draft, rewrite_draft),
             run_id=active_run_id,
         )
         result = MvpResult(

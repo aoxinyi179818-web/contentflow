@@ -5,8 +5,34 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 ContentPlatform = Literal["长文章", "社交媒体文案", "PPT 大纲", "短视频脚本"]
+ContentTone = Literal["清晰专业", "友好易懂", "启发思考", "简洁有力"]
+ContentLength = Literal["短（约 300 字）", "中（约 800 字）", "长（约 1500 字）"]
 VisualAssetType = Literal["image", "chart"]
 VisualTool = Literal["image_search", "image_generation", "chart"]
+
+CONTENT_PLATFORM_OPTIONS: tuple[ContentPlatform, ...] = (
+    "长文章",
+    "社交媒体文案",
+    "PPT 大纲",
+    "短视频脚本",
+)
+CONTENT_TONE_OPTIONS: tuple[ContentTone, ...] = ("清晰专业", "友好易懂", "启发思考", "简洁有力")
+CONTENT_LENGTH_OPTIONS: tuple[ContentLength, ...] = (
+    "短（约 300 字）",
+    "中（约 800 字）",
+    "长（约 1500 字）",
+)
+
+
+class ContentPreferences(BaseModel):
+    """User-controlled constraints that must survive the content workflow."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    audience: str = Field(min_length=1, max_length=80)
+    tone: ContentTone
+    platform: ContentPlatform
+    target_length: ContentLength
 
 
 class ContentSection(BaseModel):
@@ -26,6 +52,8 @@ class ContentPlan(BaseModel):
     topic: str = Field(min_length=1)
     audience: str = Field(min_length=1)
     tone: str = Field(min_length=1)
+    platform: ContentPlatform = "长文章"
+    target_length: ContentLength = "中（约 800 字）"
     sections: list[ContentSection] = Field(min_length=5, max_length=7)
     scope_note: str | None = None
 

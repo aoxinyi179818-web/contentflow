@@ -29,6 +29,8 @@ def render_content_package_markdown(result: MvpResult) -> str:
         f"- 主题：{result.plan.topic}",
         f"- 受众：{result.plan.audience}",
         f"- 语气：{result.plan.tone}",
+        f"- 平台：{result.plan.platform}",
+        f"- 目标篇幅：{result.plan.target_length}",
     ]
     if result.plan.scope_note:
         plan_lines.append(f"- 范围说明：{result.plan.scope_note}")
