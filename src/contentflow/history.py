@@ -22,8 +22,11 @@ def result_from_project_record(record: ProjectRecord) -> MvpResult:
         plan=record.plan,
         draft=record.draft,
         review=record.review,
-        final_content=record.final_content,
+        final_content=record.edited_content or record.final_content,
         status=record.status,
         project_id=record.id,
         adaptations=tuple(adaptations),
+        visual_plan=record.visual_plan,
+        publishing_assets=tuple(item.assets for item in record.publishing_assets),
+        original_final_content=record.final_content,
     )

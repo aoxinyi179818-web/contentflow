@@ -33,12 +33,20 @@ def build_writer_messages(plan: str | ContentPlan) -> list[dict[str, str]]:
         if isinstance(plan, ContentPlan)
         else ""
     )
+    brand_voice_guidance = (
+        f"\n\n还必须遵守这组品牌写作规则：\n{plan.brand_voice}"
+        if isinstance(plan, ContentPlan) and plan.brand_voice
+        else ""
+    )
 
     return [
         {"role": "system", "content": WRITER_INSTRUCTIONS},
         {
             "role": "user",
-            "content": f"请依据以下已确认计划写出初稿：\n\n{normalized_plan}{platform_guidance}",
+            "content": (
+                f"请依据以下已确认计划写出初稿：\n\n{normalized_plan}"
+                f"{platform_guidance}{brand_voice_guidance}"
+            ),
         },
     ]
 

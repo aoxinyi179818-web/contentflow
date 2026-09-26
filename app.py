@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from datetime import date
 
 import streamlit as st
 
 from contentflow.adapter import adapt_content
+from contentflow.agents.visual import create_visual_plan
 from contentflow.config import Settings, SettingsConfigurationError, save_deepseek_api_key
 from contentflow.database import ProjectRepository
+from contentflow.editor import rewrite_with_instruction
 from contentflow.error_handling import present_failure
 from contentflow.export import (
     default_export_stem,
@@ -21,10 +24,12 @@ from contentflow.models import (
     CONTENT_PLATFORM_OPTIONS,
     CONTENT_TONE_OPTIONS,
     FEEDBACK_RATING_OPTIONS,
+    TOPIC_STATUS_OPTIONS,
     ContentPreferences,
 )
 from contentflow.mvp import MvpResult, run_mvp
 from contentflow.observability import configure_logging, log_event, new_run_id
+from contentflow.packaging import generate_publishing_assets
 
 configure_logging()
 
@@ -136,6 +141,8 @@ def render_plan(result: MvpResult) -> None:
     )
     if result.plan.scope_note:
         st.info(result.plan.scope_note)
+    if result.plan.brand_voice:
+        st.caption(f"品牌写作规则：{result.plan.brand_voice}")
     for order, section in enumerate(result.plan.sections, start=1):
         st.markdown(f"**{order:02d}. {section.title}**　{section.objective}")
 
@@ -271,6 +278,148 @@ def render_platform_adaptations(result: MvpResult) -> None:
             )
 
 
+def _save_current_content(result: MvpResult, content: str) -> MvpResult:
+    """Keep a user-edited current version without discarding the original AI output."""
+    normalized_content = content.strip()
+    if not normalized_content:
+        raise ValueError("内容不能为空")
+    if result.project_id:
+        ProjectRepository(active_settings().database_url).save_content_override(
+            result.project_id, normalized_content
+        )
+    updated = replace(result, final_content=normalized_content)
+    st.session_state["mvp_result"] = updated
+    return updated
+
+
+def render_content_editor(result: MvpResult) -> MvpResult:
+    """Offer direct editing plus an explicitly scoped AI rewrite."""
+    st.divider()
+    st.subheader("内容编辑台")
+    st.caption("保存后会覆盖项目的当前展示稿，原始 AI 修订稿仍保留在本机。")
+    editor_key = f"editable_content_{result.project_id or result.plan.topic}"
+    if editor_key not in st.session_state:
+        st.session_state[editor_key] = result.final_content
+    if result.original_final_content and result.original_final_content != result.final_content:
+        with st.expander("查看原始 AI 修订稿"):
+            st.markdown(result.original_final_content)
+    with st.form(f"direct_edit_{editor_key}", border=False):
+        edited_content = st.text_area("当前发布稿", key=editor_key, height=320, max_chars=20_000)
+        saved = st.form_submit_button("保存人工编辑", use_container_width=True)
+    if saved:
+        try:
+            result = _save_current_content(result, edited_content)
+        except (ValueError, OSError) as error:
+            st.error(f"编辑未保存：{error}")
+        else:
+            st.success("当前发布稿已保存。")
+
+    with st.expander("AI 定向改写"):
+        st.caption("粘贴完整原文片段即可只替换这段；留空则改写整篇。")
+        with st.form(f"targeted_rewrite_{editor_key}", border=False):
+            selected_text = st.text_area("指定替换片段（可选）", height=110, max_chars=5_000)
+            instruction = st.text_area(
+                "改写要求",
+                placeholder="例如：压缩为三句，保留观点，语气更像经验分享。",
+                height=90,
+                max_chars=500,
+            )
+            rewrite_submitted = st.form_submit_button("生成并保存改写", use_container_width=True)
+        if rewrite_submitted:
+            try:
+                with st.spinner("正在按你的要求改写…"):
+                    rewritten = rewrite_with_instruction(
+                        st.session_state[editor_key],
+                        instruction,
+                        selected_text=selected_text or None,
+                        settings=active_settings(),
+                    )
+                st.session_state[editor_key] = rewritten
+                result = _save_current_content(result, rewritten)
+            except Exception as error:
+                presentation = present_failure(error)
+                if presentation.code == "unexpected":
+                    raise
+                st.error(f"{presentation.title}：{presentation.message}")
+            else:
+                st.success("改写已保存到当前发布稿。")
+    return result
+
+
+def render_publishing_assets(result: MvpResult) -> MvpResult:
+    """Generate local title, hook, tag, and CTA options without publishing anywhere."""
+    st.divider()
+    st.subheader("发布包装")
+    st.caption("只生成本地内容，不会发布到任何平台。")
+    platform = st.selectbox(
+        "包装目标平台",
+        CONTENT_PLATFORM_OPTIONS,
+        index=CONTENT_PLATFORM_OPTIONS.index(result.plan.platform),
+        key=f"packaging_platform_{result.project_id or result.plan.topic}",
+    )
+    if st.button("生成发布包装", use_container_width=True, key=f"packaging_generate_{result.project_id or result.plan.topic}"):
+        try:
+            with st.spinner("正在生成标题和封面钩子…"):
+                assets = generate_publishing_assets(result.final_content, platform=platform, settings=active_settings())
+                if result.project_id:
+                    ProjectRepository(active_settings().database_url).save_publishing_assets(result.project_id, assets)
+            result = replace(
+                result,
+                publishing_assets=tuple(item for item in result.publishing_assets if item.platform != assets.platform) + (assets,),
+            )
+            st.session_state["mvp_result"] = result
+            st.success(f"已生成{platform}的发布包装。")
+        except Exception as error:
+            presentation = present_failure(error)
+            if presentation.code == "unexpected":
+                raise
+            st.error(f"{presentation.title}：{presentation.message}")
+    for assets in result.publishing_assets:
+        with st.expander(f"{assets.platform} · 标题与包装"):
+            st.markdown("**标题备选**")
+            for index, title in enumerate(assets.titles, start=1):
+                st.markdown(f"{index}. {title}")
+            st.markdown("**封面 / 开头钩子**")
+            for hook in assets.cover_hooks:
+                st.markdown(f"- {hook}")
+            if assets.tags:
+                st.markdown("**建议标签**　" + "　".join(f"#{tag}" for tag in assets.tags))
+            st.markdown(f"**互动收尾：** {assets.call_to_action}")
+    return result
+
+
+def render_visual_suggestions(result: MvpResult) -> MvpResult:
+    """Plan visuals but deliberately never execute an image search or generation tool."""
+    st.divider()
+    st.subheader("视觉素材建议")
+    st.caption("仅给出插图、照片或图表的使用建议和提示词；不会搜索或生成图片。")
+    if st.button("生成视觉建议", use_container_width=True, key=f"visual_generate_{result.project_id or result.plan.topic}"):
+        try:
+            with st.spinner("正在判断哪些位置值得增加视觉素材…"):
+                visual_plan = create_visual_plan(result.final_content, settings=active_settings())
+                if result.project_id:
+                    ProjectRepository(active_settings().database_url).save_visual_plan(result.project_id, visual_plan)
+            result = replace(result, visual_plan=visual_plan)
+            st.session_state["mvp_result"] = result
+            st.success("视觉建议已保存。")
+        except Exception as error:
+            presentation = present_failure(error)
+            if presentation.code == "unexpected":
+                raise
+            st.error(f"{presentation.title}：{presentation.message}")
+    if not result.visual_plan:
+        st.info("生成后会显示有限、可核对的视觉建议。")
+        return result
+    st.markdown(f"**规划说明：** {result.visual_plan.overview}")
+    for asset in result.visual_plan.assets:
+        with st.expander(f"{asset.section_anchor} · {asset.purpose}"):
+            st.markdown(f"**建议类型：** {asset.asset_type}")
+            st.markdown(f"**提示词 / 搜索词：** {asset.query_or_prompt}")
+            st.markdown(f"**理由：** {asset.rationale}")
+            st.caption("当前仅提供建议；模型标注的工具不会被执行。")
+    return result
+
+
 def render_quality_overview() -> None:
     """Show local evaluation signals without exposing any content to third parties."""
     st.subheader("质量评估")
@@ -354,8 +503,115 @@ def render_result(result: MvpResult, *, heading: str = "本次内容包") -> Non
             use_container_width=True,
         )
         st.caption("保存位置由浏览器决定。若希望每次选择位置，请在浏览器下载设置中开启“下载前询问每个文件的保存位置”。")
+    result = render_content_editor(result)
+    result = render_publishing_assets(result)
+    result = render_visual_suggestions(result)
     render_platform_adaptations(result)
     render_project_feedback(result)
+
+
+def render_content_assets() -> None:
+    """Manage reusable brand rules and the local topic calendar in one workspace."""
+    st.subheader("内容资产")
+    st.caption("品牌语气和选题日历都只保存在本机，不连接外部发布平台。")
+    try:
+        repository = ProjectRepository(active_settings().database_url)
+    except Exception as error:
+        presentation = present_failure(error)
+        if presentation.code == "unexpected":
+            raise
+        st.error(f"{presentation.title}：{presentation.message}")
+        return
+    voice_tab, calendar_tab = st.tabs(["品牌语气", "选题与日历"])
+    with voice_tab:
+        st.caption("同名保存会更新原有规则；规则会在策划和写作阶段同时生效。")
+        with st.form("brand_voice_form", border=False):
+            name = st.text_input("品牌语气名称", placeholder="例如：理性但不说教")
+            instructions = st.text_area(
+                "写作规则",
+                placeholder="例如：先给结论，再解释原因；短句；避免夸张承诺。",
+                max_chars=500,
+                height=130,
+            )
+            submitted = st.form_submit_button("保存品牌语气", use_container_width=True)
+        if submitted:
+            try:
+                repository.save_brand_voice(name=name, instructions=instructions)
+            except ValueError as error:
+                st.error(f"品牌语气未保存：{error}")
+            else:
+                st.success("品牌语气已保存，可在“开始创作”中选择。")
+        voices = repository.list_brand_voices()
+        if voices:
+            st.markdown("**已保存规则**")
+            for voice in voices:
+                with st.expander(voice.name):
+                    st.write(voice.instructions)
+        else:
+            st.info("还没有品牌语气。保存后，新的内容会遵守这组写作规则。")
+    with calendar_tab:
+        st.caption("发布状态是本地记录，适合管理创作节奏；不会检查或同步真实平台。")
+        with st.form("topic_idea_form", border=False):
+            title = st.text_input("选题标题", placeholder="例如：给新手的 AI 工具选择清单")
+            notes = st.text_area("选题备注（可选）", max_chars=500, height=80)
+            platform, status = st.columns(2)
+            with platform:
+                selected_platform = st.selectbox("计划平台", CONTENT_PLATFORM_OPTIONS)
+            with status:
+                selected_status = st.selectbox("本地发布状态", TOPIC_STATUS_OPTIONS)
+            add_date = st.checkbox("加入日期计划", value=False, key="topic_add_date")
+            planned_date = st.date_input("计划日期", key="topic_scheduled_date")
+            scheduled_for = planned_date if add_date else None
+            submitted = st.form_submit_button("保存选题", use_container_width=True)
+        if submitted:
+            try:
+                repository.create_topic_idea(
+                    title=title,
+                    notes=notes,
+                    platform=selected_platform,
+                    status=selected_status,
+                    scheduled_for=scheduled_for,
+                )
+            except ValueError as error:
+                st.error(f"选题未保存：{error}")
+            else:
+                st.success("选题已保存到本地内容日历。")
+        ideas = repository.list_topic_ideas()
+        if not ideas:
+            st.info("还没有选题。先添加一个本地选题即可开始排期。")
+            return
+        st.markdown("**选题日历**")
+        st.dataframe(
+            [
+                {
+                    "计划日期": idea.scheduled_for.isoformat() if idea.scheduled_for else "未安排",
+                    "选题": idea.title,
+                    "平台": idea.platform,
+                    "状态": idea.status,
+                    "备注": idea.notes or "—",
+                }
+                for idea in ideas
+            ],
+            hide_index=True,
+            use_container_width=True,
+        )
+        selected_idea = st.selectbox("更新一条选题", ideas, format_func=lambda item: item.title)
+        with st.form("topic_idea_update_form", border=False):
+            updated_status = st.selectbox(
+                "更新状态",
+                TOPIC_STATUS_OPTIONS,
+                index=TOPIC_STATUS_OPTIONS.index(selected_idea.status),
+            )
+            keep_date = st.checkbox("保留 / 设置计划日期", value=selected_idea.scheduled_for is not None)
+            planned_update_date = st.date_input(
+                "更新计划日期",
+                value=selected_idea.scheduled_for or date.today(),
+            )
+            updated_date = planned_update_date if keep_date else None
+            update_submitted = st.form_submit_button("更新本地状态", use_container_width=True)
+        if update_submitted:
+            repository.update_topic_idea(selected_idea.id, status=updated_status, scheduled_for=updated_date)
+            st.success("本地选题状态已更新。")
 
 
 def render_project_history() -> None:
@@ -419,7 +675,7 @@ def main() -> None:
 
     workspace = st.radio(
         "工作区",
-        ("开始创作", "历史项目", "质量评估"),
+        ("开始创作", "历史项目", "内容资产", "质量评估"),
         horizontal=True,
         label_visibility="collapsed",
     )
@@ -430,6 +686,20 @@ def main() -> None:
     if workspace == "质量评估":
         render_quality_overview()
         return
+    if workspace == "内容资产":
+        render_content_assets()
+        return
+
+    try:
+        brand_voices = ProjectRepository(active_settings().database_url).list_brand_voices()
+    except Exception as error:
+        presentation = present_failure(error)
+        if presentation.code == "unexpected":
+            raise
+        st.error(f"{presentation.title}：{presentation.message}")
+        return
+    brand_voice_options = ("不使用品牌语气",) + tuple(voice.name for voice in brand_voices)
+    brand_voice_by_name = {voice.name: voice.instructions for voice in brand_voices}
 
     left, right = st.columns((1.08, 0.92), gap="large")
     with left:
@@ -455,6 +725,11 @@ def main() -> None:
                 )
             with target_length:
                 selected_length = st.selectbox("目标篇幅", CONTENT_LENGTH_OPTIONS, index=1)
+            selected_brand_voice = st.selectbox(
+                "品牌语气（可选）",
+                brand_voice_options,
+                help="保存过的写作规则会同时传入策划和写作节点。",
+            )
             submitted = st.form_submit_button("开始生成内容包", use_container_width=True)
         st.markdown(
             '<p class="panel-note">主创作平台会决定内容骨架：小红书使用钩子、分点与互动收尾；PPT 按页面组织；短视频按口播节奏组织。生成后仍可改写为其他平台版本。</p>',
@@ -485,6 +760,7 @@ def main() -> None:
                     tone=selected_tone,
                     platform=selected_platform,
                     target_length=selected_length,
+                    brand_voice=brand_voice_by_name.get(selected_brand_voice),
                 )
                 with st.spinner("正在依次完成策划、写作、审阅和修订…"):
                     settings = active_settings()

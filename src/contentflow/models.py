@@ -1,5 +1,6 @@
 """Validated data contracts for ContentFlow structured LLM output."""
 
+from datetime import date
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -15,6 +16,7 @@ ContentPlatform = Literal[
 ContentTone = Literal["清晰专业", "友好易懂", "启发思考", "简洁有力"]
 ContentLength = Literal["短（约 300 字）", "中（约 800 字）", "长（约 1500 字）"]
 FeedbackRating = Literal["有帮助", "需要改进"]
+TopicStatus = Literal["选题", "创作中", "待发布", "已发布"]
 VisualAssetType = Literal["image", "chart"]
 VisualTool = Literal["image_search", "image_generation", "chart"]
 
@@ -33,6 +35,7 @@ CONTENT_LENGTH_OPTIONS: tuple[ContentLength, ...] = (
     "长（约 1500 字）",
 )
 FEEDBACK_RATING_OPTIONS: tuple[FeedbackRating, ...] = ("有帮助", "需要改进")
+TOPIC_STATUS_OPTIONS: tuple[TopicStatus, ...] = ("选题", "创作中", "待发布", "已发布")
 
 
 class ContentPreferences(BaseModel):
@@ -44,6 +47,49 @@ class ContentPreferences(BaseModel):
     tone: ContentTone
     platform: ContentPlatform
     target_length: ContentLength
+    brand_voice: str | None = Field(default=None, max_length=500)
+
+    @field_validator("brand_voice")
+    @classmethod
+    def normalize_brand_voice(cls, value: str | None) -> str | None:
+        return value.strip() or None if value else None
+
+
+class BrandVoiceInput(BaseModel):
+    """A reusable, local writing-style rule set chosen before generation."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=40)
+    instructions: str = Field(min_length=1, max_length=500)
+
+    @field_validator("name", "instructions")
+    @classmethod
+    def normalize_text(cls, value: str) -> str:
+        return value.strip()
+
+
+class TopicIdeaInput(BaseModel):
+    """A small local content-backlog item and its publishing plan."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    title: str = Field(min_length=1, max_length=160)
+    notes: str = Field(default="", max_length=500)
+    platform: ContentPlatform
+    status: TopicStatus = "选题"
+    scheduled_for: date | None = None
+    project_id: str | None = Field(default=None, max_length=80)
+
+    @field_validator("title", "notes")
+    @classmethod
+    def normalize_topic_text(cls, value: str) -> str:
+        return value.strip()
+
+    @field_validator("project_id")
+    @classmethod
+    def normalize_project_id(cls, value: str | None) -> str | None:
+        return value.strip() or None if value else None
 
 
 class ProjectFeedbackInput(BaseModel):
@@ -79,6 +125,7 @@ class ContentPlan(BaseModel):
     tone: str = Field(min_length=1)
     platform: ContentPlatform = "长文章"
     target_length: ContentLength = "中（约 800 字）"
+    brand_voice: str | None = None
     sections: list[ContentSection] = Field(min_length=1, max_length=10)
     scope_note: str | None = None
 
@@ -145,6 +192,26 @@ class AdaptedContent(BaseModel):
     title: str = Field(min_length=1)
     content: str = Field(min_length=1)
     format_notes: list[str] = Field(default_factory=list)
+
+
+class PublishingAssets(BaseModel):
+    """Local publication packaging generated from a reviewed content version."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    platform: ContentPlatform
+    titles: list[str] = Field(min_length=3, max_length=6)
+    cover_hooks: list[str] = Field(min_length=1, max_length=3)
+    tags: list[str] = Field(default_factory=list, max_length=8)
+    call_to_action: str = Field(min_length=1, max_length=120)
+
+    @field_validator("titles", "cover_hooks", "tags")
+    @classmethod
+    def require_nonempty_items(cls, value: list[str]) -> list[str]:
+        normalized = [item.strip() for item in value if item.strip()]
+        if len(normalized) != len(value):
+            raise ValueError("publishing asset items must not be empty")
+        return normalized
 
 
 class VisualAssetPlan(BaseModel):

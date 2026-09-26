@@ -2,7 +2,7 @@
 
 import sqlite3
 from dataclasses import dataclass, replace
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 from uuid import uuid4
 
@@ -11,8 +11,12 @@ from contentflow.models import (
     AdaptedContent,
     ContentPlan,
     FeedbackRating,
+    BrandVoiceInput,
+    PublishingAssets,
     ProjectFeedbackInput,
     ReviewReport,
+    TopicIdeaInput,
+    TopicStatus,
     VisualPlan,
 )
 from contentflow.observability import log_event, new_run_id
@@ -40,6 +44,8 @@ class ProjectRecord:
     status: str
     created_at: datetime
     adaptations: tuple["ProjectAdaptation", ...] = ()
+    edited_content: str | None = None
+    publishing_assets: tuple["ProjectPublishingAssets", ...] = ()
 
 
 @dataclass(frozen=True)
@@ -68,6 +74,39 @@ class ProjectAdaptation:
 
     project_id: str
     content: AdaptedContent
+    updated_at: datetime
+
+
+@dataclass(frozen=True)
+class BrandVoice:
+    """One reusable local instruction set for a recognisable writing style."""
+
+    id: str
+    name: str
+    instructions: str
+    updated_at: datetime
+
+
+@dataclass(frozen=True)
+class TopicIdea:
+    """A local backlog item with an optional calendar date and publish state."""
+
+    id: str
+    title: str
+    notes: str
+    platform: str
+    status: TopicStatus
+    scheduled_for: date | None
+    project_id: str | None
+    updated_at: datetime
+
+
+@dataclass(frozen=True)
+class ProjectPublishingAssets:
+    """Saved local title, hook, tag, and CTA options for one output platform."""
+
+    project_id: str
+    assets: PublishingAssets
     updated_at: datetime
 
 
@@ -157,6 +196,43 @@ class ProjectRepository:
                 );
                 CREATE INDEX IF NOT EXISTS idx_project_adaptations_updated_at
                     ON project_adaptations(updated_at DESC);
+                CREATE TABLE IF NOT EXISTS project_content_overrides (
+                    project_id TEXT PRIMARY KEY,
+                    content TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    FOREIGN KEY (project_id) REFERENCES projects(id)
+                );
+                CREATE TABLE IF NOT EXISTS brand_voices (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL UNIQUE,
+                    instructions TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_brand_voices_updated_at
+                    ON brand_voices(updated_at DESC);
+                CREATE TABLE IF NOT EXISTS topic_ideas (
+                    id TEXT PRIMARY KEY,
+                    title TEXT NOT NULL,
+                    notes TEXT NOT NULL DEFAULT '',
+                    platform TEXT NOT NULL,
+                    status TEXT NOT NULL CHECK (status IN ('选题', '创作中', '待发布', '已发布')),
+                    scheduled_for TEXT,
+                    project_id TEXT,
+                    updated_at TEXT NOT NULL,
+                    FOREIGN KEY (project_id) REFERENCES projects(id)
+                );
+                CREATE INDEX IF NOT EXISTS idx_topic_ideas_schedule
+                    ON topic_ideas(scheduled_for ASC, updated_at DESC);
+                CREATE TABLE IF NOT EXISTS project_publishing_assets (
+                    project_id TEXT NOT NULL,
+                    platform TEXT NOT NULL,
+                    assets_json TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    PRIMARY KEY (project_id, platform),
+                    FOREIGN KEY (project_id) REFERENCES projects(id)
+                );
+                CREATE INDEX IF NOT EXISTS idx_project_publishing_assets_updated_at
+                    ON project_publishing_assets(updated_at DESC);
                 """
             )
 
@@ -240,7 +316,12 @@ class ProjectRepository:
         if not row:
             return None
         record = self._to_record(row)
-        return replace(record, adaptations=tuple(self.list_adaptations(record.id)))
+        return replace(
+            record,
+            adaptations=tuple(self.list_adaptations(record.id)),
+            edited_content=self.get_content_override(record.id),
+            publishing_assets=tuple(self.list_publishing_assets(record.id)),
+        )
 
     def list_recent_projects(self, *, limit: int = 20) -> list[ProjectSummary]:
         """Return newest project metadata without loading every large content artifact."""
@@ -350,6 +431,256 @@ class ProjectRepository:
                 project_id=row["project_id"],
                 content=AdaptedContent.model_validate_json(row["adapted_content_json"]),
                 updated_at=datetime.fromisoformat(row["updated_at"]),
+            )
+            for row in rows
+        ]
+
+    def save_content_override(self, project_id: str, content: str) -> str:
+        """Persist a human-edited current version while keeping the original final output."""
+        normalized_project_id = project_id.strip()
+        normalized_content = content.strip()
+        if not normalized_project_id:
+            raise ValueError("project_id must not be empty")
+        if not normalized_content or len(normalized_content) > 20_000:
+            raise ValueError("content must contain 1 to 20000 characters")
+        updated_at = datetime.now(UTC)
+        with self._connect() as connection:
+            exists = connection.execute(
+                "SELECT 1 FROM projects WHERE id = ?", (normalized_project_id,)
+            ).fetchone()
+            if not exists:
+                raise ValueError("project does not exist")
+            connection.execute(
+                """
+                INSERT INTO project_content_overrides (project_id, content, updated_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(project_id) DO UPDATE SET
+                    content = excluded.content,
+                    updated_at = excluded.updated_at
+                """,
+                (normalized_project_id, normalized_content, updated_at.isoformat()),
+            )
+        return normalized_content
+
+    def get_content_override(self, project_id: str) -> str | None:
+        """Return the local edited version, if the user has saved one."""
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT content FROM project_content_overrides WHERE project_id = ?", (project_id,)
+            ).fetchone()
+        return row["content"] if row else None
+
+    def save_visual_plan(self, project_id: str, visual_plan: VisualPlan) -> VisualPlan:
+        """Attach a visual recommendation plan without invoking any external asset tool."""
+        normalized_project_id = project_id.strip()
+        if not normalized_project_id:
+            raise ValueError("project_id must not be empty")
+        with self._connect() as connection:
+            cursor = connection.execute(
+                "UPDATE projects SET visual_plan_json = ? WHERE id = ?",
+                (visual_plan.model_dump_json(), normalized_project_id),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("project does not exist")
+        return visual_plan
+
+    def save_publishing_assets(
+        self, project_id: str, assets: PublishingAssets
+    ) -> ProjectPublishingAssets:
+        """Save the latest local publishing package for one platform."""
+        normalized_project_id = project_id.strip()
+        if not normalized_project_id:
+            raise ValueError("project_id must not be empty")
+        updated_at = datetime.now(UTC)
+        with self._connect() as connection:
+            exists = connection.execute(
+                "SELECT 1 FROM projects WHERE id = ?", (normalized_project_id,)
+            ).fetchone()
+            if not exists:
+                raise ValueError("project does not exist")
+            connection.execute(
+                """
+                INSERT INTO project_publishing_assets (project_id, platform, assets_json, updated_at)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(project_id, platform) DO UPDATE SET
+                    assets_json = excluded.assets_json,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    normalized_project_id,
+                    assets.platform,
+                    assets.model_dump_json(),
+                    updated_at.isoformat(),
+                ),
+            )
+        return ProjectPublishingAssets(normalized_project_id, assets, updated_at)
+
+    def list_publishing_assets(self, project_id: str) -> list[ProjectPublishingAssets]:
+        """Return every platform-specific packaging set for one local project."""
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT project_id, assets_json, updated_at
+                FROM project_publishing_assets
+                WHERE project_id = ?
+                ORDER BY updated_at DESC, platform ASC
+                """,
+                (project_id,),
+            ).fetchall()
+        return [
+            ProjectPublishingAssets(
+                project_id=row["project_id"],
+                assets=PublishingAssets.model_validate_json(row["assets_json"]),
+                updated_at=datetime.fromisoformat(row["updated_at"]),
+            )
+            for row in rows
+        ]
+
+    def save_brand_voice(self, *, name: str, instructions: str) -> BrandVoice:
+        """Create or update a reusable writing rule set by its human-readable name."""
+        voice = BrandVoiceInput(name=name, instructions=instructions)
+        updated_at = datetime.now(UTC)
+        with self._connect() as connection:
+            existing = connection.execute(
+                "SELECT id FROM brand_voices WHERE name = ?", (voice.name,)
+            ).fetchone()
+            voice_id = existing["id"] if existing else str(uuid4())
+            connection.execute(
+                """
+                INSERT INTO brand_voices (id, name, instructions, updated_at)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(name) DO UPDATE SET
+                    instructions = excluded.instructions,
+                    updated_at = excluded.updated_at
+                """,
+                (voice_id, voice.name, voice.instructions, updated_at.isoformat()),
+            )
+        return BrandVoice(voice_id, voice.name, voice.instructions, updated_at)
+
+    def list_brand_voices(self) -> list[BrandVoice]:
+        """Return saved local writing rules, newest first."""
+        with self._connect() as connection:
+            rows = connection.execute(
+                "SELECT id, name, instructions, updated_at FROM brand_voices ORDER BY updated_at DESC, name ASC"
+            ).fetchall()
+        return [
+            BrandVoice(
+                id=row["id"],
+                name=row["name"],
+                instructions=row["instructions"],
+                updated_at=datetime.fromisoformat(row["updated_at"]),
+            )
+            for row in rows
+        ]
+
+    def create_topic_idea(
+        self,
+        *,
+        title: str,
+        notes: str = "",
+        platform: str,
+        status: str = "选题",
+        scheduled_for: date | None = None,
+        project_id: str | None = None,
+    ) -> TopicIdea:
+        """Add one local idea to the content backlog or calendar."""
+        idea = TopicIdeaInput(
+            title=title,
+            notes=notes,
+            platform=platform,
+            status=status,
+            scheduled_for=scheduled_for,
+            project_id=project_id,
+        )
+        record = TopicIdea(
+            id=str(uuid4()),
+            title=idea.title,
+            notes=idea.notes,
+            platform=idea.platform,
+            status=idea.status,
+            scheduled_for=idea.scheduled_for,
+            project_id=idea.project_id,
+            updated_at=datetime.now(UTC),
+        )
+        with self._connect() as connection:
+            if record.project_id and not connection.execute(
+                "SELECT 1 FROM projects WHERE id = ?", (record.project_id,)
+            ).fetchone():
+                raise ValueError("project does not exist")
+            connection.execute(
+                """
+                INSERT INTO topic_ideas (
+                    id, title, notes, platform, status, scheduled_for, project_id, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    record.id,
+                    record.title,
+                    record.notes,
+                    record.platform,
+                    record.status,
+                    record.scheduled_for.isoformat() if record.scheduled_for else None,
+                    record.project_id,
+                    record.updated_at.isoformat(),
+                ),
+            )
+        return record
+
+    def update_topic_idea(
+        self, idea_id: str, *, status: str, scheduled_for: date | None
+    ) -> TopicIdea:
+        """Update only local calendar state; this never calls a publishing platform."""
+        normalized_id = idea_id.strip()
+        if not normalized_id:
+            raise ValueError("idea_id must not be empty")
+        with self._connect() as connection:
+            row = connection.execute("SELECT * FROM topic_ideas WHERE id = ?", (normalized_id,)).fetchone()
+            if not row:
+                raise ValueError("topic idea does not exist")
+            validated = TopicIdeaInput(
+                title=row["title"], notes=row["notes"], platform=row["platform"],
+                status=status, scheduled_for=scheduled_for, project_id=row["project_id"],
+            )
+            updated_at = datetime.now(UTC)
+            connection.execute(
+                "UPDATE topic_ideas SET status = ?, scheduled_for = ?, updated_at = ? WHERE id = ?",
+                (
+                    validated.status,
+                    validated.scheduled_for.isoformat() if validated.scheduled_for else None,
+                    updated_at.isoformat(),
+                    normalized_id,
+                ),
+            )
+        return TopicIdea(
+            id=normalized_id,
+            title=validated.title,
+            notes=validated.notes,
+            platform=validated.platform,
+            status=validated.status,
+            scheduled_for=validated.scheduled_for,
+            project_id=validated.project_id,
+            updated_at=updated_at,
+        )
+
+    def list_topic_ideas(self, *, limit: int = 100) -> list[TopicIdea]:
+        """Return the local backlog with dated work first, then undated ideas."""
+        if not 1 <= limit <= 200:
+            raise ValueError("limit must be between 1 and 200")
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM topic_ideas
+                ORDER BY scheduled_for IS NULL ASC, scheduled_for ASC, updated_at DESC, id DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        return [
+            TopicIdea(
+                id=row["id"], title=row["title"], notes=row["notes"], platform=row["platform"],
+                status=row["status"], scheduled_for=date.fromisoformat(row["scheduled_for"])
+                if row["scheduled_for"] else None,
+                project_id=row["project_id"], updated_at=datetime.fromisoformat(row["updated_at"]),
             )
             for row in rows
         ]

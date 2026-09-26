@@ -73,4 +73,24 @@ def render_content_package_markdown(result: MvpResult) -> str:
         + "\n".join(f"- {note}" for note in adaptation.format_notes)
         for adaptation in result.adaptations
     )
+    sections.extend(
+        "## 发布包装：" + assets.platform + "\n"
+        + "### 标题备选\n"
+        + "\n".join(f"{index}. {title}" for index, title in enumerate(assets.titles, start=1))
+        + "\n\n### 封面 / 开头钩子\n"
+        + "\n".join(f"- {hook}" for hook in assets.cover_hooks)
+        + ("\n\n### 建议标签\n" + " ".join(f"#{tag}" for tag in assets.tags) if assets.tags else "")
+        + "\n\n### 互动收尾\n" + assets.call_to_action
+        for assets in result.publishing_assets
+    )
+    if result.visual_plan:
+        visual_lines = [f"- 规划说明：{result.visual_plan.overview}"]
+        visual_lines.extend(
+            (
+                f"- {asset.section_anchor}：{asset.purpose}；"
+                f"提示词 / 搜索词：{asset.query_or_prompt}；理由：{asset.rationale}"
+            )
+            for asset in result.visual_plan.assets
+        )
+        sections.append("## 视觉素材建议（仅规划）\n" + "\n".join(visual_lines))
     return "\n\n".join(sections) + "\n"

@@ -63,3 +63,25 @@ def test_result_from_project_record_keeps_the_viewer_artifacts() -> None:
     assert result.final_content == "修订稿"
     assert result.metrics is None
     assert result.project_id == "project-1"
+
+
+def test_history_uses_the_saved_human_edit_but_retains_original_for_comparison() -> None:
+    record = ProjectRecord(
+        id="project-1",
+        topic="新生学习计划",
+        plan=_plan(),
+        research=None,
+        draft="初稿",
+        review=_review(),
+        final_content="AI 修订稿",
+        adapted_content=None,
+        visual_plan=None,
+        status="completed",
+        created_at=datetime(2026, 9, 13, tzinfo=UTC),
+        edited_content="人工编辑稿",
+    )
+
+    result = result_from_project_record(record)
+
+    assert result.final_content == "人工编辑稿"
+    assert result.original_final_content == "AI 修订稿"

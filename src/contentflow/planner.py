@@ -38,7 +38,8 @@ def build_planner_messages(
             f"\n- 语气：{preferences.tone}"
             f"\n- 输出平台：{preferences.platform}"
             f"\n- 目标篇幅：{preferences.target_length}"
-            f"\n\n{build_platform_guidance(preferences.platform)}"
+            + (f"\n- 品牌写作规则：{preferences.brand_voice}" if preferences.brand_voice else "")
+            + f"\n\n{build_platform_guidance(preferences.platform)}"
         )
     return [
         {"role": "system", "content": PLANNER_INSTRUCTIONS},
@@ -78,6 +79,7 @@ def create_plan(
                 "tone": preferences.tone,
                 "platform": preferences.platform,
                 "target_length": preferences.target_length,
+                "brand_voice": preferences.brand_voice,
             }
         )
     return plan

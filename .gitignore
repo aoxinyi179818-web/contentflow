@@ -2,12 +2,28 @@ __pycache__/
 *.py[cod]
 .venv/
 .env
+.env.tmp
 .pytest_cache/
+tmp/
 .mypy_cache/
 .ruff_cache/
 *.log
 data/runtime/
+data/*.db
+data/*.db-shm
+data/*.db-wal
+data/*.sqlite
+data/*.sqlite3
 dist/
 build/
 *.egg-info/
 
+# Generated course artifacts and visual QA output.
+deliverables/
+docs.zip
+docx_qa/
+report_final_qa*/
+template_*_qa*/
+
+# Local screen recordings are shared through cloud storage, not Git.
+屏幕录制*.mp4

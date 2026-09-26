@@ -9,7 +9,9 @@ class PromptNotFoundError(FileNotFoundError):
     """Raised when code requests a prompt that is not part of the application."""
 
 
-PROMPT_NAMES = frozenset({"planner", "writer", "reviewer", "rewriter", "adapter", "visual"})
+PROMPT_NAMES = frozenset(
+    {"planner", "writer", "reviewer", "rewriter", "adapter", "visual", "editor", "packaging"}
+)
 PROMPTS_DIRECTORY = Path(__file__).resolve().parents[2] / "prompts"
 
 

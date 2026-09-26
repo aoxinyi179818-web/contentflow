@@ -76,6 +76,29 @@ class ResearchWorkflowServices:
     visual_planner: VisualPlannerService | None = None
 
 
+@dataclass(frozen=True)
+class ResearchWorkflowPolicy:
+    """Validated product rules that bound the researched content workflow."""
+
+    quality_threshold: int = 80
+    evidence_threshold: int = 15
+    max_rewrite_count: int = 1
+    max_research_count: int = 2
+    max_visual_assets: int = 3
+
+    def __post_init__(self) -> None:
+        if not 0 <= self.quality_threshold <= 100:
+            raise ValueError("quality_threshold must be between 0 and 100")
+        if not 0 <= self.evidence_threshold <= 100:
+            raise ValueError("evidence_threshold must be between 0 and 100")
+        if self.max_rewrite_count < 0:
+            raise ValueError("max_rewrite_count must not be negative")
+        if self.max_research_count < 0:
+            raise ValueError("max_research_count must not be negative")
+        if not 1 <= self.max_visual_assets <= 5:
+            raise ValueError("max_visual_assets must be between 1 and 5")
+
+
 def build_research_question(topic: str, plan: ContentPlan) -> str:
     return (
         f"请为主题“{topic}”查找可以支持以下内容计划的资料，并明确来源。"
@@ -269,10 +292,13 @@ def run_researched_contentflow_graph(
     *,
     settings: Settings,
     services: ResearchWorkflowServices,
+    policy: ResearchWorkflowPolicy | None = None,
     platform: str = "社交媒体文案",
     run_id: str | None = None,
 ) -> dict[str, object]:
+    """Invoke the researched graph with one validated product policy."""
     normalized_topic = validate_topic(topic)
+    active_policy = policy or ResearchWorkflowPolicy()
     active_run_id = run_id or new_run_id()
     log_event("workflow_start", run_id=active_run_id, workflow="researched_contentflow")
     try:
@@ -281,13 +307,13 @@ def run_researched_contentflow_graph(
                 "topic": normalized_topic,
                 "run_id": active_run_id,
                 "settings": settings,
-                "quality_threshold": 80,
-                "max_rewrite_count": 1,
+                "quality_threshold": active_policy.quality_threshold,
+                "max_rewrite_count": active_policy.max_rewrite_count,
                 "rewrite_count": 0,
-                "evidence_threshold": 15,
-                "max_research_count": 2,
+                "evidence_threshold": active_policy.evidence_threshold,
+                "max_research_count": active_policy.max_research_count,
                 "research_count": 0,
-                "max_visual_assets": 3,
+                "max_visual_assets": active_policy.max_visual_assets,
                 "platform": platform,
                 "status": "started",
             }

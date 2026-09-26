@@ -6,7 +6,14 @@ from functools import partial
 
 from contentflow.config import Settings
 from contentflow.database import ProjectRepository
-from contentflow.models import AdaptedContent, ContentPlan, ContentPreferences, ReviewReport
+from contentflow.models import (
+    AdaptedContent,
+    ContentPlan,
+    ContentPreferences,
+    PublishingAssets,
+    ReviewReport,
+    VisualPlan,
+)
 from contentflow.observability import (
     RunMetrics,
     configure_logging,
@@ -33,6 +40,9 @@ class MvpResult:
     metrics: RunMetrics | None = None
     project_id: str | None = None
     adaptations: tuple[AdaptedContent, ...] = ()
+    visual_plan: VisualPlan | None = None
+    publishing_assets: tuple[PublishingAssets, ...] = ()
+    original_final_content: str | None = None
 
 
 def run_mvp(
@@ -76,6 +86,7 @@ def run_mvp(
             status=workflow_result["status"],
             metrics=get_run_metrics(active_run_id),
             project_id=project_id,
+            original_final_content=workflow_result["final_content"],
         )
     except Exception as error:
         log_event("mvp_error", run_id=active_run_id, error_type=type(error).__name__)

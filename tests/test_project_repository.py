@@ -1,4 +1,5 @@
 import pytest
+from datetime import date
 
 from contentflow.agents.research import ResearchResult
 from contentflow.database.projects import DatabaseUrlError, ProjectRepository
@@ -9,6 +10,7 @@ from contentflow.models import (
     ReviewReport,
     VisualAssetPlan,
     VisualPlan,
+    PublishingAssets,
 )
 from contentflow.tools.local_research import ResearchSource
 
@@ -182,3 +184,46 @@ def test_repository_keeps_one_adaptation_for_each_platform(tmp_path) -> None:
     assert loaded is not None
     assert {item.content.platform for item in loaded.adaptations} == {"小红书笔记", "PPT 大纲"}
     assert next(item for item in loaded.adaptations if item.content.platform == "小红书笔记").content.title == "更新的学习笔记"
+
+
+def test_repository_keeps_local_workbench_assets_without_changing_original_final(tmp_path) -> None:
+    repository = ProjectRepository(f"sqlite:///{(tmp_path / 'contentflow.db').as_posix()}")
+    project = repository.save_project(
+        topic="主题一",
+        plan=make_plan(),
+        draft="初稿一",
+        review=make_review(),
+        final_content="原始终稿",
+        status="completed",
+    )
+    voice = repository.save_brand_voice(name="克制专业", instructions="先说结论，避免夸张。")
+    same_voice = repository.save_brand_voice(name="克制专业", instructions="短句，避免夸张。")
+    idea = repository.create_topic_idea(
+        title="下一个选题",
+        notes="面向新手",
+        platform="小红书笔记",
+        status="创作中",
+        scheduled_for=date(2026, 9, 20),
+        project_id=project.id,
+    )
+    updated_idea = repository.update_topic_idea(idea.id, status="待发布", scheduled_for=None)
+    assets = PublishingAssets(
+        platform="小红书笔记",
+        titles=["标题一", "标题二", "标题三"],
+        cover_hooks=["一分钟看懂"],
+        tags=["学习方法"],
+        call_to_action="收藏后今晚试一次。",
+    )
+    repository.save_content_override(project.id, "人工编辑后的终稿")
+    repository.save_publishing_assets(project.id, assets)
+    loaded = repository.get_project(project.id)
+
+    assert voice.id == same_voice.id
+    assert repository.list_brand_voices()[0].instructions == "短句，避免夸张。"
+    assert updated_idea.status == "待发布"
+    assert updated_idea.scheduled_for is None
+    assert repository.list_topic_ideas()[0].title == "下一个选题"
+    assert loaded is not None
+    assert loaded.final_content == "原始终稿"
+    assert loaded.edited_content == "人工编辑后的终稿"
+    assert loaded.publishing_assets[0].assets == assets

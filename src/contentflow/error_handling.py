@@ -16,8 +16,10 @@ from contentflow.agents.visual import VisualPlannerConfigurationError
 from contentflow.config import SettingsConfigurationError
 from contentflow.database.projects import DatabaseUrlError
 from contentflow.deepseek_hello import DeepSeekConfigurationError
+from contentflow.editor import EditorConfigurationError
 from contentflow.input_validation import TopicInputError
 from contentflow.planner import PlannerConfigurationError
+from contentflow.packaging import PackagingConfigurationError
 from contentflow.reviewer import ReviewerConfigurationError
 from contentflow.rewriter import RewriterConfigurationError
 from contentflow.structured import StructuredOutputError
@@ -37,6 +39,8 @@ class FailurePresentation:
 _CONFIGURATION_ERRORS = (
     AdapterConfigurationError,
     DeepSeekConfigurationError,
+    EditorConfigurationError,
+    PackagingConfigurationError,
     PlannerConfigurationError,
     ResearchConfigurationError,
     ReviewerConfigurationError,
