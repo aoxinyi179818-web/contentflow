@@ -22,7 +22,9 @@ class WriterConfigurationError(RuntimeError):
 WRITER_INSTRUCTIONS = load_prompt("writer")
 
 
-def build_writer_messages(plan: str | ContentPlan) -> list[dict[str, str]]:
+def build_writer_messages(
+    plan: str | ContentPlan, *, source_context: str | None = None
+) -> list[dict[str, str]]:
     """Validate a confirmed plan and build the first Writer request."""
     normalized_plan = plan.model_dump_json(indent=2) if isinstance(plan, ContentPlan) else plan.strip()
     if not normalized_plan:
@@ -38,6 +40,11 @@ def build_writer_messages(plan: str | ContentPlan) -> list[dict[str, str]]:
         if isinstance(plan, ContentPlan) and plan.brand_voice
         else ""
     )
+    source_guidance = (
+        f"\n\n写作参考资料：\n{source_context.strip()}"
+        if source_context and source_context.strip()
+        else ""
+    )
 
     return [
         {"role": "system", "content": WRITER_INSTRUCTIONS},
@@ -45,13 +52,18 @@ def build_writer_messages(plan: str | ContentPlan) -> list[dict[str, str]]:
             "role": "user",
             "content": (
                 f"请依据以下已确认计划写出初稿：\n\n{normalized_plan}"
-                f"{platform_guidance}{brand_voice_guidance}"
+                f"{platform_guidance}{brand_voice_guidance}{source_guidance}"
             ),
         },
     ]
 
 
-def create_draft(plan: str | ContentPlan, settings: Settings | None = None) -> str:
+def create_draft(
+    plan: str | ContentPlan,
+    settings: Settings | None = None,
+    *,
+    source_context: str | None = None,
+) -> str:
     """Request one Markdown draft from the configured DeepSeek model."""
     active_settings = settings or Settings.from_env()
     client = create_deepseek_client(
@@ -61,7 +73,7 @@ def create_draft(plan: str | ContentPlan, settings: Settings | None = None) -> s
     )
     response = client.chat.completions.create(
         model=active_settings.llm_model,
-        messages=build_writer_messages(plan),
+        messages=build_writer_messages(plan, source_context=source_context),
     )
     record_llm_usage(response, node="writer")
     content = response.choices[0].message.content

@@ -465,10 +465,21 @@ def render_result(result: MvpResult, *, heading: str = "本次内容包") -> Non
     """Present every workflow artifact so users can inspect, not only copy, AI output."""
     st.divider()
     st.subheader(heading)
-    st.info(
-        "使用提示：AI 生成内容可能有错误，请核查关键事实、引用和适用范围。"
-        "当前 Research 使用本地演示资料，不等同于实时网络检索。"
+    st.info("使用提示：AI 生成内容可能有错误，请核查关键事实、引用和适用范围。")
+    user_url_sources = (
+        [source for source in result.research.sources if source.source_type == "user_url"]
+        if result.research
+        else []
     )
+    if user_url_sources:
+        with st.expander("本次已读取的网页参考", expanded=False):
+            for source in user_url_sources:
+                st.markdown(f"- [{source.title}]({source.url})")
+                st.caption(source.summary[:240] + ("…" if len(source.summary) > 240 else ""))
+    if result.reference_failures:
+        st.warning("以下参考网址未能读取，生成内容未基于这些链接：\n\n" + "\n".join(
+            f"- {failure}" for failure in result.reference_failures
+        ))
     if result.metrics:
         metrics = result.metrics
         llm, tools, rewrites, duration, tokens = st.columns(5)
@@ -710,6 +721,12 @@ def main() -> None:
                 placeholder="例如：面向大学新生，写一篇 800 字的文章，解释如何建立可持续的学习习惯。",
                 height=150,
             )
+            reference_urls = st.text_area(
+                "参考网址（可选，每行一个，最多 3 个）",
+                placeholder="https://example.com/article",
+                height=90,
+                help="系统只读取公开的 HTML、文本或 Markdown 页面；不会访问本机、内网或需登录页面。",
+            )
             st.markdown("**内容偏好**")
             audience, tone = st.columns((1.2, 0.8))
             with audience:
@@ -771,6 +788,7 @@ def main() -> None:
                         repository=repository,
                         run_id=run_id,
                         preferences=preferences,
+                        reference_urls=reference_urls,
                     )
                 st.session_state["mvp_export_stem"] = default_export_stem(normalized_topic)
                 log_event("ui_complete", run_id=run_id)

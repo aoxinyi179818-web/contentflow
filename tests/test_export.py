@@ -1,3 +1,4 @@
+from contentflow.agents.research import ResearchResult
 from contentflow.export import (
     default_export_stem,
     render_content_package_markdown,
@@ -11,6 +12,7 @@ from contentflow.models import (
     ReviewReport,
 )
 from contentflow.mvp import MvpResult
+from contentflow.tools.local_research import ResearchSource
 
 
 def _result() -> MvpResult:
@@ -78,3 +80,26 @@ def test_content_package_contains_each_workflow_artifact() -> None:
     assert "这里是修订稿。" in package
     assert "平台版本：小红书笔记" in package
     assert "这里是平台版本。" in package
+
+
+def test_content_package_includes_traceable_web_reference_urls() -> None:
+    result = _result()
+    result = MvpResult(
+        **{**result.__dict__, "research": ResearchResult(
+            answer="网页参考。",
+            sources=[
+                ResearchSource(
+                    source_id="user-url-1",
+                    title="公开资料",
+                    url="https://example.com/article",
+                    summary="可核对的网页正文。",
+                    source_type="user_url",
+                )
+            ],
+        )}
+    )
+
+    package = render_content_package_markdown(result)
+
+    assert "本次参考来源" in package
+    assert "https://example.com/article" in package

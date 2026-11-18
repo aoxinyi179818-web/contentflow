@@ -40,7 +40,9 @@ def build_reviewer_messages(
     ]
 
 
-def review_draft(draft: str, settings: Settings | None = None) -> ReviewReport:
+def review_draft(
+    draft: str, settings: Settings | None = None, *, research_context: str | None = None
+) -> ReviewReport:
     """Request and validate one structured review report from DeepSeek."""
     active_settings = settings or Settings.from_env()
     client = create_deepseek_client(
@@ -50,7 +52,7 @@ def review_draft(draft: str, settings: Settings | None = None) -> ReviewReport:
     )
     response = client.chat.completions.create(
         model=active_settings.llm_model,
-        messages=build_reviewer_messages(draft),
+        messages=build_reviewer_messages(draft, research_context=research_context),
         response_format={"type": "json_object"},
         max_tokens=2500,
     )

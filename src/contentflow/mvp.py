@@ -4,6 +4,7 @@ import argparse
 from dataclasses import dataclass
 from functools import partial
 
+from contentflow.agents.research import ResearchResult
 from contentflow.config import Settings
 from contentflow.database import ProjectRepository
 from contentflow.models import (
@@ -24,6 +25,7 @@ from contentflow.observability import (
 from contentflow.planner import create_plan
 from contentflow.reviewer import review_draft
 from contentflow.rewriter import rewrite_draft
+from contentflow.web_sources import collect_web_references, format_web_reference_context
 from contentflow.workflow.graph import WorkflowServices, run_contentflow_graph
 from contentflow.writer import create_draft
 
@@ -43,6 +45,8 @@ class MvpResult:
     visual_plan: VisualPlan | None = None
     publishing_assets: tuple[PublishingAssets, ...] = ()
     original_final_content: str | None = None
+    research: ResearchResult | None = None
+    reference_failures: tuple[str, ...] = ()
 
 
 def run_mvp(
@@ -51,19 +55,45 @@ def run_mvp(
     repository: ProjectRepository | None = None,
     run_id: str | None = None,
     preferences: ContentPreferences | None = None,
+    reference_urls: str | tuple[str, ...] | list[str] | None = None,
 ) -> MvpResult:
     """Run the bounded LangGraph workflow while preserving the MVP result interface."""
     active_settings = settings or Settings.from_env()
     active_run_id = run_id or new_run_id()
     log_event("mvp_start", run_id=active_run_id)
     try:
-        planner_service = (
-            partial(create_plan, preferences=preferences) if preferences else create_plan
+        web_references = collect_web_references(reference_urls)
+        source_context = format_web_reference_context(web_references.sources)
+        research = (
+            ResearchResult(
+                answer="用户提供的网页参考资料。",
+                sources=list(web_references.sources),
+            )
+            if web_references.sources
+            else None
+        )
+        if preferences and source_context:
+            planner_service = partial(
+                create_plan, preferences=preferences, source_context=source_context
+            )
+        elif preferences:
+            planner_service = partial(create_plan, preferences=preferences)
+        elif source_context:
+            planner_service = partial(create_plan, source_context=source_context)
+        else:
+            planner_service = create_plan
+        writer_service = (
+            partial(create_draft, source_context=source_context) if source_context else create_draft
+        )
+        reviewer_service = (
+            partial(review_draft, research_context=source_context)
+            if source_context
+            else review_draft
         )
         workflow_result = run_contentflow_graph(
             topic,
             settings=active_settings,
-            services=WorkflowServices(planner_service, create_draft, review_draft, rewrite_draft),
+            services=WorkflowServices(planner_service, writer_service, reviewer_service, rewrite_draft),
             run_id=active_run_id,
         )
         project_id = None
@@ -75,6 +105,7 @@ def run_mvp(
                 review=workflow_result["review"],
                 final_content=workflow_result["final_content"],
                 status=workflow_result["status"],
+                research=research,
                 run_id=active_run_id,
             )
             project_id = saved_project.id if saved_project else None
@@ -87,6 +118,8 @@ def run_mvp(
             metrics=get_run_metrics(active_run_id),
             project_id=project_id,
             original_final_content=workflow_result["final_content"],
+            research=research,
+            reference_failures=web_references.failures,
         )
     except Exception as error:
         log_event("mvp_error", run_id=active_run_id, error_type=type(error).__name__)

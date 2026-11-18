@@ -67,6 +67,12 @@ def render_content_package_markdown(result: MvpResult) -> str:
         "## 审阅报告\n" + "\n".join(review_lines),
         "## 修订稿\n" + result.final_content,
     ]
+    if result.research and result.research.sources:
+        source_lines = [
+            f"- [{source.source_id}] {source.title}：{source.url}"
+            for source in result.research.sources
+        ]
+        sections.insert(2, "## 本次参考来源\n" + "\n".join(source_lines))
     sections.extend(
         f"## 平台版本：{adaptation.platform}\n"
         f"### {adaptation.title}\n\n{adaptation.content}\n\n"

@@ -1,6 +1,8 @@
 from contentflow import mvp
 from contentflow.config import Settings
 from contentflow.models import ContentPlan, ContentPreferences, ContentSection, ReviewReport
+from contentflow.tools.local_research import ResearchSource
+from contentflow.web_sources import WebReferenceCollection
 
 
 def test_run_mvp_preserves_its_result_interface_with_quality_loop(monkeypatch) -> None:
@@ -113,3 +115,63 @@ def test_run_mvp_passes_user_preferences_to_the_planner(monkeypatch) -> None:
     result = mvp.run_mvp("测试主题", settings=settings, preferences=expected_preferences)
 
     assert result.plan.platform == "短视频脚本"
+
+
+def test_run_mvp_passes_user_web_references_to_every_generation_node(monkeypatch) -> None:
+    plan = ContentPlan(
+        topic="测试主题",
+        audience="读者",
+        tone="清晰",
+        sections=[ContentSection(title=f"部分{i}", objective="说明") for i in range(5)],
+    )
+    review = ReviewReport(
+        score=90,
+        summary="通过。",
+        structure_score=25,
+        clarity_score=25,
+        audience_tone_score=20,
+        completeness_score=20,
+    )
+    source = ResearchSource(
+        source_id="user-url-1",
+        title="公开资料",
+        url="https://example.com/article",
+        summary="这是用户提供的网址正文，用于生成内容。",
+        source_type="user_url",
+    )
+    contexts: list[str] = []
+    monkeypatch.setattr(
+        mvp,
+        "collect_web_references",
+        lambda urls: WebReferenceCollection((source,), ("https://bad.example：读取失败",)),
+    )
+    monkeypatch.setattr(
+        mvp,
+        "create_plan",
+        lambda topic, *, settings, preferences=None, source_context=None: (
+            contexts.append(source_context or "") or plan
+        ),
+    )
+    monkeypatch.setattr(
+        mvp,
+        "create_draft",
+        lambda received_plan, *, settings, source_context=None: (
+            contexts.append(source_context or "") or "初稿"
+        ),
+    )
+    monkeypatch.setattr(
+        mvp,
+        "review_draft",
+        lambda draft, *, settings, research_context=None: (
+            contexts.append(research_context or "") or review
+        ),
+    )
+    monkeypatch.setattr(mvp, "rewrite_draft", lambda draft, review, *, settings: "修订稿")
+
+    result = mvp.run_mvp("测试主题", settings=Settings(), reference_urls="https://example.com/article")
+
+    assert len(contexts) == 3
+    assert all("[user-url-1]" in context for context in contexts)
+    assert result.research is not None
+    assert result.research.sources == [source]
+    assert result.reference_failures == ("https://bad.example：读取失败",)

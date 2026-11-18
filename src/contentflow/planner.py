@@ -23,7 +23,7 @@ PLANNER_INSTRUCTIONS = load_prompt("planner")
 
 
 def build_planner_messages(
-    topic: str, *, preferences: ContentPreferences | None = None
+    topic: str, *, preferences: ContentPreferences | None = None, source_context: str | None = None
 ) -> list[dict[str, str]]:
     """Validate a topic and build the first Planner request."""
     normalized_topic = topic.strip()
@@ -41,6 +41,8 @@ def build_planner_messages(
             + (f"\n- 品牌写作规则：{preferences.brand_voice}" if preferences.brand_voice else "")
             + f"\n\n{build_platform_guidance(preferences.platform)}"
         )
+    if source_context and source_context.strip():
+        request += f"\n\n写作参考资料：\n{source_context.strip()}"
     return [
         {"role": "system", "content": PLANNER_INSTRUCTIONS},
         {"role": "user", "content": request},
@@ -52,6 +54,7 @@ def create_plan(
     settings: Settings | None = None,
     *,
     preferences: ContentPreferences | None = None,
+    source_context: str | None = None,
 ) -> ContentPlan:
     """Request and validate one structured content plan from DeepSeek."""
     active_settings = settings or Settings.from_env()
@@ -62,7 +65,9 @@ def create_plan(
     )
     response = client.chat.completions.create(
         model=active_settings.llm_model,
-        messages=build_planner_messages(topic, preferences=preferences),
+        messages=build_planner_messages(
+            topic, preferences=preferences, source_context=source_context
+        ),
         response_format={"type": "json_object"},
         max_tokens=2000,
     )
